@@ -2,9 +2,13 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { VRMUtils, type VRM } from '@pixiv/three-vrm'
 import { useVRMLoader } from '../hooks/useVRMLoader'
-import { useVRMAnimationLoader } from '../hooks/useVRMAnimationLoader'
+import { useVRMAnimationsLoader } from '../hooks/useVRMAnimationLoader'
 import { getPreset } from './presets'
-import { buildIdleMixer, type IdleMixer } from './animation'
+import {
+  createAnimationController,
+  setActiveAnimationController,
+  type AnimationController,
+} from './animation-controller'
 import {
   createBlinkController,
   createSaccadeController,
@@ -17,19 +21,22 @@ interface Props {
 }
 
 /**
- * Renders a VRM avatar with Phase 1 "idle life-signs":
+ * Renders a VRM avatar with the full Phase 1-4 life-sign stack:
  *
- *  - .vrma idle loop driving bone transforms (breathing, weight shift)
- *  - blinking every 3-6s with jitter
- *  - eye saccades (small random gaze shifts around the camera)
- *  - spring bone physics (hair/cloth sway), via vrm.update()
+ *  - AnimationController: idle loop + emotion bodies + gesture one-shots
+ *  - Blinking + eye saccades
+ *  - Spring bone physics
+ *  - Lip-sync driving aa/ih/ou/ee/oh from wlipsync weights
+ *  - Expression controller driving upper-face emotion blendshapes
  *
- * Per-frame update order matters:
- *   1. mixer.update(delta)       — pose bones from .vrma
- *   2. blink.update(vrm, delta)  — set blink expression weight
- *   3. saccade.update(...)       — move lookAt target to camera + drift
- *   4. vrm.update(delta)         — commits humanoid + springBone + lookAt
- *                                  + expressionManager in one call
+ * Per-frame update order:
+ *   1. animController.update(delta)    — advance mixer, handle overlay fade-back
+ *   2. blink(vrm, delta)                — set blink expression
+ *   3. saccade.update(...)              — move lookAt target
+ *   4. expression.update(vrm, delta)    — set happy/sad/etc. facial presets
+ *   5. lipSync.update(vrm, delta)       — set aa/ih/ou/ee/oh
+ *   6. vrm.update(delta)                — commit humanoid + springBone + lookAt
+ *                                         + expressionManager in one call
  */
 export function VRMCharacter({ presetId }: Props) {
   const preset = getPreset(presetId)
@@ -37,13 +44,20 @@ export function VRMCharacter({ presetId }: Props) {
   const vrm = gltf.userData.vrm
   const vrmRef = useRef<VRM>(vrm)
 
-  const idleAnimation = useVRMAnimationLoader(preset.animations.idle)
+  // Preload every clip declared on the preset in parallel. Component
+  // Suspends until all are ready — at 1.4MB total this is fast, and it
+  // guarantees zero lag on the first emotion/gesture trigger.
+  const animationUrls = useMemo(
+    () => preset.animations.map((a) => a.url),
+    [preset],
+  )
+  const animations = useVRMAnimationsLoader(animationUrls)
 
   const { camera, scene } = useThree()
 
   const blink = useMemo(() => createBlinkController(), [])
   const saccade = useMemo(() => createSaccadeController(), [])
-  const idleRef = useRef<IdleMixer | null>(null)
+  const animRef = useRef<AnimationController | null>(null)
 
   useEffect(() => {
     vrmRef.current = vrm
@@ -56,8 +70,6 @@ export function VRMCharacter({ presetId }: Props) {
       vrm.scene.rotation.y = Math.PI
     }
 
-    // Attach the saccade target into the scene so lookAt can read its
-    // world position reliably.
     scene.add(saccade.target)
 
     return () => {
@@ -67,33 +79,27 @@ export function VRMCharacter({ presetId }: Props) {
   }, [vrm, scene, saccade])
 
   useEffect(() => {
-    const vrmInstance = vrmRef.current
-    if (!vrmInstance || !idleAnimation) return
-
-    const mixer = buildIdleMixer(vrmInstance, idleAnimation)
-    idleRef.current = mixer
+    const v = vrmRef.current
+    if (!v) return
+    const controller = createAnimationController(v, preset.animations, animations)
+    animRef.current = controller
+    setActiveAnimationController(controller)
 
     return () => {
-      mixer.dispose()
-      idleRef.current = null
+      setActiveAnimationController(null)
+      controller.dispose()
+      animRef.current = null
     }
-  }, [vrm, idleAnimation])
+  }, [vrm, preset, animations])
 
   useFrame((_, delta) => {
     const v = vrmRef.current
     if (!v) return
 
-    idleRef.current?.mixer.update(delta)
+    animRef.current?.update(delta)
     blink(v, delta)
     saccade.update(v, camera, delta)
-
-    // Emotion controller sets happy/sad/angry/etc. with ADSR + cross-fade.
-    // Independent from lip-sync: this owns the upper-face presets, lip-sync
-    // owns aa/ih/ou/ee/oh. No overlap, no fights.
     getExpressionController().update(v, delta)
-
-    // Lip-sync reads wlipsync's current phoneme weights and sets aa/ih/ou/ee/oh.
-    // Null until the user clicks "enable audio" in the debug panel.
     getLipSyncDriver()?.update(v, delta)
 
     v.update(delta)

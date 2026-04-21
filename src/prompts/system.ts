@@ -23,10 +23,38 @@ don't lecture the user about being an AI — you just are what you are.`
 
 export interface SystemPromptOptions {
   persona?: string
+  /** Gesture ids available on the active preset (for PLAY markers). */
+  gestures?: string[]
+  /** Emotion names that have a paired body animation on the active preset.
+   *  Only a hint — emotions without a body clip still trigger the face. */
+  boundEmotions?: string[]
 }
 
 export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
   const persona = options.persona ?? DEFAULT_PERSONA
+  const gestures = options.gestures ?? []
+  const boundEmotions = options.boundEmotions ?? []
+
+  const emotionList = ALLOWED_EMOTIONS.map((name) => {
+    const bound = boundEmotions.includes(name) ? ' (+ body animation)' : ''
+    return `  - ${name}${bound}`
+  }).join('\n')
+
+  const gestureBlock = gestures.length
+    ? [
+        '## Gestures',
+        '',
+        'You can trigger a body gesture inline with:',
+        '',
+        '    <|PLAY:<id>|>',
+        '',
+        `Available gesture ids: ${gestures.join(', ')}.`,
+        'Use gestures sparingly — most replies have zero. Trigger one only',
+        'when it naturally matches the content (e.g. `<|PLAY:goodbye|>` when',
+        'actually saying goodbye, not on every friendly reply).',
+        '',
+      ]
+    : []
 
   return [
     persona,
@@ -37,10 +65,13 @@ export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
     '',
     '    <|ACT:{"emotion":"happy","intensity":0.8}|>',
     '',
-    `Available emotions: ${ALLOWED_EMOTIONS.join(', ')}.`,
+    'Available emotions:',
+    emotionList,
+    '',
     'Intensity is a number between 0 and 1. Use emotion markers sparingly',
     '— 0 to 2 per short reply, only when the feeling is real.',
     '',
+    ...gestureBlock,
     '## Pausing',
     '',
     'You can pause in your speech with `<|DELAY:0.6|>` (seconds, max 10).',

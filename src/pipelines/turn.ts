@@ -4,6 +4,7 @@ import { createResponseCategorizer } from './response-categorizer'
 import { createMarkerParser, parseMarker } from './marker-parser'
 import { createStreamingSpeaker } from './speech-pipeline'
 import { getExpressionController } from '../vrm/expression-controller'
+import { getActiveAnimationController } from '../vrm/animation-controller'
 
 export interface TurnHandle {
   /** Resolves when LLM + TTS + playback all complete. */
@@ -24,6 +25,8 @@ export interface RunTurnOptions {
   onAssistantText?: (delta: string) => void
   /** Called with parsed emotion markers (for debug panels). */
   onEmotion?: (emotion: string, intensity: number) => void
+  /** Called with parsed gesture (PLAY) markers. */
+  onGesture?: (id: string) => void
   /** Called when the LLM stream finishes (before playback finishes). */
   onStreamEnd?: () => void
 }
@@ -42,6 +45,7 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
 
   const speaker = createStreamingSpeaker()
   const expression = getExpressionController()
+  const animation = getActiveAnimationController()
 
   // Chain the parsers: LLM → categorizer → marker parser → outputs
   const marker = createMarkerParser({
@@ -55,13 +59,23 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
       const parsed = parseMarker(raw)
       if (!parsed) return
       if (parsed.type === 'act') {
+        // Face: ADSR envelope for the expression preset
         expression.trigger(parsed.emotion, parsed.intensity)
+        // Body: if the preset has a clip bound to this emotion, it plays in
+        // parallel. triggerEmotion returns false for unbound emotions — we
+        // just rely on the facial expression in that case.
+        animation?.triggerEmotion(parsed.emotion)
         options.onEmotion?.(parsed.emotion, parsed.intensity)
       } else if (parsed.type === 'delay') {
         // Pause the speaker by feeding a soft flush + waiting. For Phase 4
         // we approximate with a setTimeout — the streaming speaker's TTS
         // pipeline keeps ordering, so the pause happens between chunks.
         await new Promise<void>((r) => setTimeout(r, parsed.seconds * 1000))
+      } else if (parsed.type === 'play') {
+        // Gesture whitelist lives in the animation controller; unknown ids
+        // return false and are dropped without crashing.
+        const started = animation?.play(parsed.id) ?? false
+        if (started) options.onGesture?.(parsed.id)
       }
     },
   })
@@ -74,7 +88,11 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
 
   const promise = (async () => {
     try {
-      const systemPrompt = buildSystemPrompt({ persona: options.persona })
+      const systemPrompt = buildSystemPrompt({
+        persona: options.persona,
+        gestures: animation?.getGestureIds() ?? [],
+        boundEmotions: animation?.getBoundEmotions() ?? [],
+      })
       const stream = streamChat({
         messages: options.messages,
         systemPrompt,
@@ -109,6 +127,7 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
       ac.abort()
       speaker.abort()
       expression.reset()
+      animation?.stop()
     },
   }
 }

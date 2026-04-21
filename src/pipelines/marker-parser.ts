@@ -94,7 +94,13 @@ export interface DelayMarker {
   seconds: number
 }
 
-export type ParsedMarker = ActMarker | DelayMarker | null
+export interface PlayMarker {
+  type: 'play'
+  /** Gesture id from the preset's animation registry (e.g. 'jump'). */
+  id: string
+}
+
+export type ParsedMarker = ActMarker | DelayMarker | PlayMarker | null
 
 /**
  * Parses a raw `<|…|>` marker string into a typed payload. Returns null if
@@ -104,6 +110,7 @@ export type ParsedMarker = ActMarker | DelayMarker | null
  * Accepted forms:
  *   <|ACT:{"emotion":"happy","intensity":0.8}|>
  *   <|DELAY:1.5|>
+ *   <|PLAY:jump|>
  */
 export function parseMarker(raw: string): ParsedMarker {
   const inner = raw.replace(/^<\|/, '').replace(/\|>$/, '').trim()
@@ -136,6 +143,14 @@ export function parseMarker(raw: string): ParsedMarker {
     const secs = Number(delayMatch[1])
     if (!Number.isFinite(secs) || secs < 0) return null
     return { type: 'delay', seconds: Math.min(secs, 10) } // cap at 10s for safety
+  }
+
+  // PLAY: <gesture-id>
+  // Accept `snake_case` ids matching our preset registry. The animation
+  // controller whitelists by id — unknown gestures are dropped silently.
+  const playMatch = /^PLAY\s*:\s*([a-z][a-z0-9_]*)$/i.exec(inner)
+  if (playMatch) {
+    return { type: 'play', id: playMatch[1].toLowerCase() }
   }
 
   return null

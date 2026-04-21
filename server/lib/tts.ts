@@ -25,5 +25,5 @@ export function getElevenLabsClient(): ElevenLabsClient {
  */
 export const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? '21m00Tcm4TlvDq8ikWAM';
 
-export const TTS_MODEL_ID = 'eleven_flash_v2_5';
+export const TTS_MODEL_ID = 'eleven_v3' as const;
 export const TTS_OUTPUT_FORMAT = 'mp3_44100_128' as const;
