@@ -7,6 +7,44 @@ import {
 } from '../vrm/lip-sync-driver'
 
 // ---------------------------------------------------------------------------
+// TTS-safe text sanitizer
+// ---------------------------------------------------------------------------
+//
+// ElevenLabs rejects "text that normalizes to empty" with HTTP 400
+// (`Input at position 0 has empty text`). This bites us when a chunk is
+// made up entirely of non-speakable characters — emoji, pictographs,
+// punctuation-only tails ("..."), etc.
+//
+// Two things happen here:
+//   1. Strip characters that don't contribute to speech. Emoji and
+//      pictographic symbols read awkwardly even when they don't fail —
+//      "🎉" rendered as "party popper" is rarely what the model meant.
+//   2. Return null if nothing speakable remains. The caller skips the
+//      chunk entirely rather than emitting silence or a 400.
+//
+// NOTICE:
+// We keep letters, numbers, CJK, common punctuation, and whitespace.
+// We drop \p{Extended_Pictographic} (emoji) and miscellaneous-symbol
+// blocks. Punctuation-only remnants ("...") also fail the speakable
+// check because they contain no letter/number/CJK.
+
+const EMOJI_REGEX = /\p{Extended_Pictographic}\p{Emoji_Modifier}?/gu
+// Variation selectors (FE0F) and zero-width joiners (200D) are left behind
+// when emoji sequences are stripped; clean them too.
+const STRIP_REMNANTS = /[\u200D\uFE00-\uFE0F]/g
+
+function sanitizeForTTS(text: string): string | null {
+  const stripped = text.replace(EMOJI_REGEX, '').replace(STRIP_REMNANTS, '')
+  const trimmed = stripped.replace(/\s+/g, ' ').trim()
+  if (!trimmed) return null
+  // Must contain at least one letter / number / CJK character — pure
+  // punctuation like "..." has no phoneme content and ElevenLabs errors
+  // on it unpredictably.
+  if (!/[\p{L}\p{N}]/u.test(trimmed)) return null
+  return trimmed
+}
+
+// ---------------------------------------------------------------------------
 // Shared primitives
 // ---------------------------------------------------------------------------
 
@@ -69,6 +107,8 @@ export function speak(
 
   const ac = new AbortController()
   const chunks = chunkText(text, options.chunker)
+    .map(sanitizeForTTS)
+    .filter((c): c is string => c !== null)
 
   // Fire all TTS fetches in parallel — ElevenLabs handles a paragraph's
   // worth of concurrent requests fine. Playback order is preserved by the
@@ -153,11 +193,11 @@ export function createStreamingSpeaker(
   }
 
   function flushChunk(text: string) {
-    const trimmed = text.trim()
-    if (!trimmed) return
+    const speakable = sanitizeForTTS(text)
+    if (!speakable) return
     chunksEmitted++
     pendingBuffers.push(
-      synthesize(trimmed, {
+      synthesize(speakable, {
         voiceId: options.voiceId,
         signal: ac.signal,
       }).catch((e) => {
