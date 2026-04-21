@@ -32,9 +32,19 @@ const EMOJI_REGEX = /\p{Extended_Pictographic}\p{Emoji_Modifier}?/gu
 // Variation selectors (FE0F) and zero-width joiners (200D) are left behind
 // when emoji sequences are stripped; clean them too.
 const STRIP_REMNANTS = /[\u200D\uFE00-\uFE0F]/g
+// Grok occasionally emits raw HTML (e.g. `<span style="color:#00ff00">🐢</span>`)
+// even with the no-markup rule in the system prompt. ElevenLabs tokenizes
+// those attribute fragments into speakable-but-empty segments and throws a
+// 400 "Text for a segment cannot be empty". Strip tags defensively. The
+// regex is deliberately simple (no nested tag handling) since the model
+// doesn't produce anything that complex.
+const HTML_TAG_REGEX = /<\/?[a-zA-Z][^>]*>/g
 
 function sanitizeForTTS(text: string): string | null {
-  const stripped = text.replace(EMOJI_REGEX, '').replace(STRIP_REMNANTS, '')
+  const stripped = text
+    .replace(HTML_TAG_REGEX, '')
+    .replace(EMOJI_REGEX, '')
+    .replace(STRIP_REMNANTS, '')
   const trimmed = stripped.replace(/\s+/g, ' ').trim()
   if (!trimmed) return null
   // Must contain at least one letter / number / CJK character — pure

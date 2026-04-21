@@ -104,11 +104,18 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
         await categorizer.consume(delta)
       }
 
+      // Once aborted we abandon the buffered categorizer/marker tails —
+      // flushing them would re-emit literals through `onAssistantText`,
+      // and `onStreamEnd` would then push a "completed" assistant reply
+      // on top of the `[interrupted]` copy the controller already
+      // committed. speaker.abort() in the `finally` tears down TTS.
+      if (ac.signal.aborted) return
+
       await categorizer.flush()
       await marker.flush()
       options.onStreamEnd?.()
 
-      if (!ac.signal.aborted) await speaker.end()
+      await speaker.end()
     } catch (err) {
       // Aborts are expected from the Stop button / barge-in; bubble up any
       // other failure so the caller can surface it.

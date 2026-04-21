@@ -85,6 +85,9 @@ export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
     '  `<|ACT:{"emotion":"happy","intensity":0.7}|> That\\\'s great!`,',
     '  NOT "Happily, I say: That\\\'s great!".',
     '- Do not wrap text in quotes or include asterisk-actions like *smiles*.',
+    '- Plain text only — never emit HTML, XML, Markdown, or CSS',
+    '  (no `<span>`, no `**bold**`, no colour styling). Your reply is read',
+    '  aloud by a TTS that chokes on markup.',
     '- Reply in the same language the user is using.',
   ].join('\n')
 }

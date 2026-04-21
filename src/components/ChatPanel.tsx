@@ -1,43 +1,75 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react'
 import { ensureLipSyncDriver } from '../vrm/lip-sync-driver'
-import { runTurn, type TurnHandle } from '../pipelines/turn'
+import {
+  createTurnController,
+  type TurnController,
+  type TurnState,
+  type UITurn,
+} from '../pipelines/turn-controller'
 
 type AudioStatus = 'idle' | 'initializing' | 'ready' | 'error'
 
-interface UITurn {
-  role: 'user' | 'assistant'
-  content: string
-  emotions?: Array<{ name: string; intensity: number }>
-}
-
 /**
- * Phase 4 chat panel.
+ * Phase 5 chat panel.
  *
  * One combined UI:
  *  - "Click to enable audio" gate (unlocks AudioContext + wlipsync worklet).
- *  - Scrollable message list (the full conversation context sent to the LLM).
+ *  - Mic toggle (VAD mode) — hands-free turn-taking + barge-in.
+ *  - Scrollable message list mirroring the controller's history.
  *  - Input box; Enter sends, Shift+Enter adds a newline.
- *  - Stop button aborts LLM + TTS + current playback via the TurnHandle.
+ *  - Stop button aborts current turn and commits `[interrupted]` to history.
  */
 export function ChatPanel() {
   const [status, setStatus] = useState<AudioStatus>('idle')
   const [audioError, setAudioError] = useState<string | null>(null)
 
-  const [turns, setTurns] = useState<UITurn[]>([])
-  const [input, setInput] = useState('')
-  const [streaming, setStreaming] = useState(false)
+  // Controller is created once per mount. In dev StrictMode this runs
+  // twice — harmless, `createTurnController` allocates nothing that would
+  // leak until the first `startMic()` call.
+  const controller = useMemo<TurnController>(() => createTurnController(), [])
+  const [turnState, setTurnState] = useState<TurnState>('idle')
+  const [history, setHistory] = useState<UITurn[]>([])
   const [liveAssistant, setLiveAssistant] = useState('')
+  const [micOn, setMicOn] = useState(false)
+  const [micPending, setMicPending] = useState(false)
+  const [input, setInput] = useState('')
   const [turnError, setTurnError] = useState<string | null>(null)
 
-  const turnHandleRef = useRef<TurnHandle | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    // Scroll to bottom whenever the message log or live stream updates.
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
-  }, [turns, liveAssistant])
+    const unsub = controller.subscribe((ev) => {
+      switch (ev.type) {
+        case 'state':
+          setTurnState(ev.state)
+          break
+        case 'history':
+          setHistory(controller.getHistory())
+          setLiveAssistant(controller.getLiveAssistant())
+          break
+        case 'assistant-delta':
+          setLiveAssistant(controller.getLiveAssistant())
+          break
+        case 'error':
+          setTurnError(ev.message)
+          break
+      }
+    })
+    return () => {
+      unsub()
+      void controller.destroy()
+    }
+  }, [controller])
 
-  useEffect(() => () => turnHandleRef.current?.abort(), [])
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
+  }, [history, liveAssistant])
 
   async function handleEnableAudio() {
     setStatus('initializing')
@@ -51,63 +83,40 @@ export function ChatPanel() {
     }
   }
 
+  async function handleToggleMic() {
+    setTurnError(null)
+    setMicPending(true)
+    try {
+      if (micOn) {
+        await controller.stopMic()
+        setMicOn(false)
+      } else {
+        await controller.startMic()
+        setMicOn(true)
+      }
+    } catch (e) {
+      setTurnError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMicPending(false)
+    }
+  }
+
   function handleSend() {
     const trimmed = input.trim()
-    if (!trimmed || streaming) return
-
+    if (!trimmed) return
     setTurnError(null)
     setInput('')
-    setLiveAssistant('')
-
-    const userTurn: UITurn = { role: 'user', content: trimmed }
-    const nextTurns = [...turns, userTurn]
-    setTurns(nextTurns)
-
-    const emotionsSeen: Array<{ name: string; intensity: number }> = []
-    let assistantText = ''
-
-    setStreaming(true)
-    const handle = runTurn({
-      messages: nextTurns.map((t) => ({ role: t.role, content: t.content })),
-      onAssistantText: (delta) => {
-        assistantText += delta
-        setLiveAssistant(assistantText)
-      },
-      onEmotion: (name, intensity) => {
-        emotionsSeen.push({ name, intensity })
-      },
-      onStreamEnd: () => {
-        // LLM tokens finished; playback may still be going.
-        setTurns((prev) => [
-          ...prev,
-          { role: 'assistant', content: assistantText, emotions: emotionsSeen },
-        ])
-        setLiveAssistant('')
-      },
-    })
-    turnHandleRef.current = handle
-
-    handle.promise
-      .catch((e) => setTurnError(e instanceof Error ? e.message : String(e)))
-      .finally(() => {
-        setStreaming(false)
-        turnHandleRef.current = null
-        setLiveAssistant('')
-      })
+    controller.sendText(trimmed)
   }
 
   function handleStop() {
-    turnHandleRef.current?.abort()
-    // Preserve whatever we streamed so far as the assistant's turn, so the
-    // LLM sees its own partial reply in the next round's context.
-    if (liveAssistant.trim()) {
-      setTurns((prev) => [
-        ...prev,
-        { role: 'assistant', content: `${liveAssistant} [interrupted]` },
-      ])
-    }
-    setLiveAssistant('')
-    setStreaming(false)
+    controller.abort()
+  }
+
+  function handleClear() {
+    if (turnState === 'speaking' || turnState === 'thinking') return
+    controller.clearHistory()
+    setTurnError(null)
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -117,26 +126,37 @@ export function ChatPanel() {
     }
   }
 
-  function handleClear() {
-    if (streaming) return
-    setTurns([])
-    setLiveAssistant('')
-    setTurnError(null)
-  }
-
-  const disabled = status !== 'ready'
+  const busy = turnState === 'thinking' || turnState === 'speaking'
+  const canEdit = status === 'ready'
 
   return (
-    <div className="pointer-events-auto absolute bottom-4 right-4 flex h-[28rem] w-96 flex-col gap-2 rounded-lg bg-black/60 p-3 text-sm backdrop-blur-sm">
+    <div className="pointer-events-auto absolute bottom-4 right-4 flex h-[30rem] w-96 flex-col gap-2 rounded-lg bg-black/60 p-3 text-sm backdrop-blur-sm">
       <div className="flex items-center gap-2">
-        <div className="font-semibold opacity-80">Phase 4 · chat</div>
+        <div className="font-semibold opacity-80">Phase 5 · voice chat</div>
+        <StateChip state={turnState} micOn={micOn} />
         <button
           onClick={handleClear}
-          disabled={streaming || turns.length === 0}
+          disabled={busy || history.length === 0}
           className="ml-auto rounded bg-zinc-800 px-2 py-0.5 text-[10px] uppercase tracking-wider hover:bg-zinc-700 disabled:opacity-30"
         >
           Clear
         </button>
+        {status === 'ready' && (
+          <button
+            onClick={handleToggleMic}
+            disabled={micPending}
+            className={[
+              'rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-white',
+              micOn
+                ? 'bg-rose-600 hover:bg-rose-500'
+                : 'bg-cyan-700 hover:bg-cyan-600',
+              'disabled:cursor-not-allowed disabled:opacity-40',
+            ].join(' ')}
+            title={micOn ? 'Stop listening' : 'Start listening'}
+          >
+            {micPending ? '…' : micOn ? '● Mic' : '○ Mic'}
+          </button>
+        )}
       </div>
 
       {status === 'idle' && (
@@ -158,12 +178,19 @@ export function ChatPanel() {
             ref={listRef}
             className="flex-1 space-y-2 overflow-y-auto rounded bg-zinc-950/60 p-2 text-xs"
           >
-            {turns.length === 0 && !liveAssistant && (
-              <div className="opacity-50">Say something to start…</div>
+            {history.length === 0 && !liveAssistant && turnState === 'idle' && (
+              <div className="opacity-50">
+                {micOn
+                  ? 'Mic is on — just start talking.'
+                  : 'Turn on the mic or type to start.'}
+              </div>
             )}
-            {turns.map((t, i) => (
+            {history.map((t, i) => (
               <Turn key={i} turn={t} />
             ))}
+            {(turnState === 'listening' || turnState === 'transcribing') && (
+              <EphemeralTurn kind="user" state={turnState} />
+            )}
             {liveAssistant && (
               <Turn turn={{ role: 'assistant', content: liveAssistant }} live />
             )}
@@ -174,22 +201,26 @@ export function ChatPanel() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             rows={2}
-            placeholder="Type a message… (Enter to send)"
-            disabled={disabled || streaming}
+            placeholder={
+              micOn
+                ? 'Or type a message… (Enter to send)'
+                : 'Type a message… (Enter to send)'
+            }
+            disabled={!canEdit}
             className="resize-none rounded bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-cyan-500 disabled:opacity-50"
           />
 
           <div className="flex gap-2">
             <button
               onClick={handleSend}
-              disabled={disabled || streaming || !input.trim()}
+              disabled={!canEdit || !input.trim()}
               className="flex-1 rounded bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:opacity-40"
             >
-              {streaming ? 'Speaking…' : 'Send'}
+              Send
             </button>
             <button
               onClick={handleStop}
-              disabled={!streaming}
+              disabled={!busy}
               className="rounded bg-rose-600 px-3 py-1.5 font-medium text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:opacity-40"
             >
               ■ Stop
@@ -207,6 +238,41 @@ export function ChatPanel() {
   )
 }
 
+function StateChip({ state, micOn }: { state: TurnState; micOn: boolean }) {
+  const { label, color } = stateChip(state, micOn)
+  return (
+    <span
+      className={[
+        'rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider',
+        color,
+      ].join(' ')}
+    >
+      {label}
+    </span>
+  )
+}
+
+function stateChip(state: TurnState, micOn: boolean) {
+  switch (state) {
+    case 'listening':
+      return { label: 'listening', color: 'bg-amber-600 text-white' }
+    case 'transcribing':
+      return { label: 'transcribing', color: 'bg-amber-500 text-black' }
+    case 'thinking':
+      return { label: 'thinking', color: 'bg-sky-600 text-white' }
+    case 'speaking':
+      return { label: 'speaking', color: 'bg-emerald-600 text-white' }
+    case 'idle':
+    default:
+      return {
+        label: micOn ? 'idle · mic on' : 'idle',
+        color: micOn
+          ? 'bg-zinc-700 text-emerald-300'
+          : 'bg-zinc-800 text-zinc-400',
+      }
+  }
+}
+
 function Turn({ turn, live }: { turn: UITurn; live?: boolean }) {
   const isUser = turn.role === 'user'
   return (
@@ -216,6 +282,7 @@ function Turn({ turn, live }: { turn: UITurn; live?: boolean }) {
           'inline-block max-w-[85%] rounded-md px-2 py-1 align-top',
           isUser ? 'bg-cyan-900/60 text-cyan-50' : 'bg-zinc-800 text-zinc-100',
           live ? 'opacity-80' : '',
+          turn.interrupted ? 'italic opacity-70' : '',
         ].join(' ')}
       >
         {turn.content || (live ? '…' : '')}
@@ -229,6 +296,24 @@ function Turn({ turn, live }: { turn: UITurn; live?: boolean }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function EphemeralTurn({
+  kind,
+  state,
+}: {
+  kind: 'user'
+  state: TurnState
+}) {
+  const label =
+    state === 'listening' ? 'listening…' : 'transcribing…'
+  return (
+    <div className={kind === 'user' ? 'text-right' : 'text-left'}>
+      <div className="inline-block max-w-[85%] rounded-md bg-cyan-950/60 px-2 py-1 align-top text-cyan-200/80">
+        {label}
+      </div>
     </div>
   )
 }
