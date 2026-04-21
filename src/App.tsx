@@ -16,7 +16,7 @@ export function App() {
       </Suspense>
 
       <div className="pointer-events-none absolute left-4 top-4 text-xs opacity-60">
-        AI Companion · Phase 2
+        AI Companion · Phase 3
       </div>
 
       <AudioDebugPanel />

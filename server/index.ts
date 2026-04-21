@@ -2,6 +2,7 @@ import 'dotenv/config'
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { serve } from '@hono/node-server'
+import { tts } from './routes/tts'
 
 const app = new Hono()
 
@@ -15,6 +16,8 @@ app.get('/api/health', (c) =>
     hasElevenLabsKey: Boolean(process.env.ELEVENLABS_API_KEY),
   }),
 )
+
+app.route('/api/tts', tts)
 
 const port = Number(process.env.PORT ?? 8787)
 
