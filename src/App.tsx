@@ -1,6 +1,6 @@
 import { Suspense } from 'react'
 import { Scene } from './vrm/Scene'
-import { AudioDebugPanel } from './components/AudioDebugPanel'
+import { ChatPanel } from './components/ChatPanel'
 
 export function App() {
   return (
@@ -16,10 +16,10 @@ export function App() {
       </Suspense>
 
       <div className="pointer-events-none absolute left-4 top-4 text-xs opacity-60">
-        AI Companion · Phase 3
+        AI Companion · Phase 4
       </div>
 
-      <AudioDebugPanel />
+      <ChatPanel />
     </div>
   )
 }

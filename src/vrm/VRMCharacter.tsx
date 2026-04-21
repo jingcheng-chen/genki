@@ -10,6 +10,7 @@ import {
   createSaccadeController,
 } from './idle-life'
 import { getLipSyncDriver } from './lip-sync-driver'
+import { getExpressionController } from './expression-controller'
 
 interface Props {
   presetId: string
@@ -85,6 +86,11 @@ export function VRMCharacter({ presetId }: Props) {
     idleRef.current?.mixer.update(delta)
     blink(v, delta)
     saccade.update(v, camera, delta)
+
+    // Emotion controller sets happy/sad/angry/etc. with ADSR + cross-fade.
+    // Independent from lip-sync: this owns the upper-face presets, lip-sync
+    // owns aa/ih/ou/ee/oh. No overlap, no fights.
+    getExpressionController().update(v, delta)
 
     // Lip-sync reads wlipsync's current phoneme weights and sets aa/ih/ou/ee/oh.
     // Null until the user clicks "enable audio" in the debug panel.

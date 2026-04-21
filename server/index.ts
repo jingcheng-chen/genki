@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { serve } from '@hono/node-server'
 import { tts } from './routes/tts'
+import { chat } from './routes/chat'
 
 const app = new Hono()
 
@@ -18,6 +19,7 @@ app.get('/api/health', (c) =>
 )
 
 app.route('/api/tts', tts)
+app.route('/api/chat', chat)
 
 const port = Number(process.env.PORT ?? 8787)
 
