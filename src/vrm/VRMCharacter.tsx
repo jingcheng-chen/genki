@@ -9,6 +9,7 @@ import {
   createBlinkController,
   createSaccadeController,
 } from './idle-life'
+import { getLipSyncDriver } from './lip-sync-driver'
 
 interface Props {
   presetId: string
@@ -84,6 +85,10 @@ export function VRMCharacter({ presetId }: Props) {
     idleRef.current?.mixer.update(delta)
     blink(v, delta)
     saccade.update(v, camera, delta)
+
+    // Lip-sync reads wlipsync's current phoneme weights and sets aa/ih/ou/ee/oh.
+    // Null until the user clicks "enable audio" in the debug panel.
+    getLipSyncDriver()?.update(v, delta)
 
     v.update(delta)
   })

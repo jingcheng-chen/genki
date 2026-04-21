@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { Scene } from './vrm/Scene'
+import { AudioDebugPanel } from './components/AudioDebugPanel'
 
 export function App() {
   return (
@@ -15,8 +16,10 @@ export function App() {
       </Suspense>
 
       <div className="pointer-events-none absolute left-4 top-4 text-xs opacity-60">
-        AI Companion · Phase 0
+        AI Companion · Phase 2
       </div>
+
+      <AudioDebugPanel />
     </div>
   )
 }

@@ -38,6 +38,9 @@ importers:
       three:
         specifier: ^0.169.0
         version: 0.169.0
+      wlipsync:
+        specifier: ^1.3.0
+        version: 1.3.0
       zustand:
         specifier: ^5.0.1
         version: 5.0.12(@types/react@18.3.28)(react@18.3.1)(use-sync-external-store@1.6.0(react@18.3.1))
@@ -1553,6 +1556,9 @@ packages:
     engines: {node: '>= 8'}
     hasBin: true
 
+  wlipsync@1.3.0:
+    resolution: {integrity: sha512-wYF85QAWCQE2rma9qoXok5we77XouCKxNh0HvbzRAtSIhc/QZbSh2rh5vKgWYHD4jrTE8+CwaxvU9oEUqYO9Zw==}
+
   wrap-ansi@7.0.0:
     resolution: {integrity: sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==}
     engines: {node: '>=10'}
@@ -2847,6 +2853,8 @@ snapshots:
   which@2.0.2:
     dependencies:
       isexe: 2.0.0
+
+  wlipsync@1.3.0: {}
 
   wrap-ansi@7.0.0:
     dependencies:
