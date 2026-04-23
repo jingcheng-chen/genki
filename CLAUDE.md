@@ -219,6 +219,7 @@ The `Marker examples` block was added specifically to push the stable prefix abo
 - The user is technical, reads code, gives precise bug reports ("the scene is empty on return swap", "TTS is gibberish sometimes") — take these as diagnostic.
 - **They do not want me to commit.** They review and commit manually. Never `git commit` unless explicitly asked.
 - For substantial multi-file work they expect a sub-agent (general-purpose) run in background with a full self-contained brief. Keep the main-thread context clean.
+- **Always try to distribute tasks using sub-agents.** Default to delegating: exploration, research, multi-file edits, verification runs, and any work that would bloat the main-thread context should go to a sub-agent with a self-contained brief. The main thread stays as the orchestrator. Only skip delegation for trivially small edits (single-file, few-line changes) or when the user has asked for a direct one-shot change.
 - For exploratory questions ("how could we do X?") they want 2-3 sentences with a recommendation and the main tradeoff, not a plan. Don't implement until they agree.
 - They trust the process: if you tell them a sub-agent is running and will report back, they'll wait.
 - They'll push back if an answer is too long or too cautious. Be direct.
@@ -246,7 +247,13 @@ pnpm build          # tsc + vite build (production bundle)
 1. `pnpm typecheck` clean.
 2. `pnpm test:run` all pass.
 3. `pnpm dev` in background, 4s wait.
-4. Playwright MCP (`select:mcp__plugin_playwright_playwright__browser_navigate,…`). The standard smoke:
+4. **Always drive the browser via the Playwright CLI, not the MCP.** Use the shell, e.g.:
+
+   ```bash
+   playwright-cli open http://localhost:5173 --headed --persistent
+   ```
+
+   `--headed` keeps the window visible so the user can watch the run; `--persistent` reuses a profile directory so localStorage / IndexedDB / granted permissions survive across invocations (critical for Mika↔Ani swap and memory regressions). Drive subsequent actions through the same CLI session. The standard smoke:
    - Clear localStorage, reload.
    - StartGate → pick Mika → Start.
    - Send `"Hi, I'm Captain and I live in Tokyo."` Wait for reply. Expect a live Mika reply with emotion chip.
