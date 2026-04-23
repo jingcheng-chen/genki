@@ -1,10 +1,22 @@
+import { Suspense } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Environment, OrbitControls } from '@react-three/drei'
 import { VRMCharacter } from './VRMCharacter'
-import { DEFAULT_PRESET_ID, getPreset } from './presets'
+import { getPreset } from './presets'
+import { useCharacterStore } from '../stores/character'
 
+/**
+ * Renders the active character. The `key` on VRMCharacter is the preset
+ * id — switching characters unmounts the old component (which triggers
+ * `VRMUtils.deepDispose` + animation controller teardown inside) and
+ * mounts a fresh one against the new model URL. The inner Suspense
+ * boundary means a character swap shows the "Loading avatar…" fallback
+ * for the new VRM without blanking the whole Canvas / OrbitControls
+ * state.
+ */
 export function Scene() {
-  const preset = getPreset(DEFAULT_PRESET_ID)
+  const activePresetId = useCharacterStore((s) => s.activePresetId)
+  const preset = getPreset(activePresetId)
   const [camX, camY, camZ] = preset.defaultCameraOffset ?? [0, 1.3, 1.5]
 
   return (
@@ -22,7 +34,9 @@ export function Scene() {
       />
       <Environment preset="city" background={false} />
 
-      <VRMCharacter presetId={preset.id} />
+      <Suspense fallback={null}>
+        <VRMCharacter key={preset.id} presetId={preset.id} />
+      </Suspense>
 
       <OrbitControls
         target={[0, camY, 0]}

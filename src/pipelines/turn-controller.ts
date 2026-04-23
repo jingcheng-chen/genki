@@ -27,9 +27,23 @@ export type TurnState =
   | 'thinking'
   | 'speaking'
 
+/**
+ * Per-turn preset snapshot — the persona/voice/custom-instructions the
+ * turn controller should use for the NEXT LLM call. Callers pass a
+ * getter, not a fixed value, so the controller always sees the freshest
+ * store state (e.g. right after the user flipped between Mika and Ani).
+ */
+export interface TurnPreset {
+  persona: string
+  customInstructions?: string
+  voiceId?: string
+}
+
 export interface TurnControllerOptions {
   /** ISO language hint forwarded to Scribe. Leave undefined for auto. */
   language?: string
+  /** Called once per turn to resolve the active character's persona + voice. */
+  getPreset: () => TurnPreset
 }
 
 export interface AssistantEmotionMark {
@@ -76,7 +90,7 @@ export interface TurnController {
 const BARGE_IN_GRACE_MS = 500
 
 export function createTurnController(
-  options: TurnControllerOptions = {},
+  options: TurnControllerOptions,
 ): TurnController {
   let state: TurnState = 'idle'
   const history: UITurn[] = []
@@ -190,8 +204,12 @@ export function createTurnController(
 
     setState('thinking')
 
+    const preset = options.getPreset()
     const handle = runTurn({
       messages: history.map((t) => ({ role: t.role, content: t.content })),
+      persona: preset.persona,
+      customInstructions: preset.customInstructions,
+      voiceId: preset.voiceId,
       onAssistantText: (delta) => {
         if (state === 'thinking') setState('speaking')
         liveAssistant += delta

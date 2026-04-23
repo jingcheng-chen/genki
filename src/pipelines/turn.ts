@@ -18,8 +18,13 @@ export interface TurnHandle {
 export interface RunTurnOptions {
   /** Full chat history including the user's latest message. */
   messages: ChatMessage[]
-  /** Override the persona. Defaults to Aria persona in `prompts/system.ts`. */
-  persona?: string
+  /** Character persona block. Required — pass the active preset's `persona`. */
+  persona: string
+  /** User-authored per-character override appended below the persona. */
+  customInstructions?: string
+  /** ElevenLabs voice id for this turn's TTS. Defaults to the server's
+   *  fallback voice (Rachel) if omitted. */
+  voiceId?: string
   /** Called with each assistant text delta AFTER reasoning tags are stripped
    *  and marker tokens are removed. Intended for UI transcript rendering. */
   onAssistantText?: (delta: string) => void
@@ -43,7 +48,7 @@ export interface RunTurnOptions {
 export function runTurn(options: RunTurnOptions): TurnHandle {
   const ac = new AbortController()
 
-  const speaker = createStreamingSpeaker()
+  const speaker = createStreamingSpeaker({ voiceId: options.voiceId })
   const expression = getExpressionController()
   const animation = getActiveAnimationController()
 
@@ -90,6 +95,7 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
     try {
       const systemPrompt = buildSystemPrompt({
         persona: options.persona,
+        customInstructions: options.customInstructions,
         gestures: animation?.getGestureIds() ?? [],
         boundEmotions: animation?.getBoundEmotions() ?? [],
       })

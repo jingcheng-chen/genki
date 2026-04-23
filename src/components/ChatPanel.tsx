@@ -12,6 +12,8 @@ import {
   type TurnState,
   type UITurn,
 } from '../pipelines/turn-controller'
+import { useCharacterStore } from '../stores/character'
+import { getPreset } from '../vrm/presets'
 
 type AudioStatus = 'idle' | 'initializing' | 'ready' | 'error'
 
@@ -29,10 +31,30 @@ export function ChatPanel() {
   const [status, setStatus] = useState<AudioStatus>('idle')
   const [audioError, setAudioError] = useState<string | null>(null)
 
+  const activePresetId = useCharacterStore((s) => s.activePresetId)
+
   // Controller is created once per mount. In dev StrictMode this runs
   // twice — harmless, `createTurnController` allocates nothing that would
   // leak until the first `startMic()` call.
-  const controller = useMemo<TurnController>(() => createTurnController(), [])
+  //
+  // `getPreset` reads the store fresh on each turn so switching
+  // characters mid-session picks up the new persona / voice / custom
+  // instructions without having to recreate the controller.
+  const controller = useMemo<TurnController>(
+    () =>
+      createTurnController({
+        getPreset: () => {
+          const state = useCharacterStore.getState()
+          const p = getPreset(state.activePresetId)
+          return {
+            persona: p.persona,
+            voiceId: p.voiceId,
+            customInstructions: state.customInstructions[state.activePresetId],
+          }
+        },
+      }),
+    [],
+  )
   const [turnState, setTurnState] = useState<TurnState>('idle')
   const [history, setHistory] = useState<UITurn[]>([])
   const [liveAssistant, setLiveAssistant] = useState('')
@@ -70,6 +92,19 @@ export function ChatPanel() {
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
   }, [history, liveAssistant])
+
+  // On character switch: abort any in-flight reply and reset the chat.
+  // A half-delivered Mika line doesn't make sense once the user has
+  // flipped to Ani — the voice and persona would change mid-sentence.
+  const isFirstPresetRun = useRef(true)
+  useEffect(() => {
+    if (isFirstPresetRun.current) {
+      isFirstPresetRun.current = false
+      return
+    }
+    controller.abort()
+    controller.clearHistory()
+  }, [activePresetId, controller])
 
   async function handleEnableAudio() {
     setStatus('initializing')
@@ -132,7 +167,7 @@ export function ChatPanel() {
   return (
     <div className="pointer-events-auto absolute bottom-4 right-4 flex h-[30rem] w-96 flex-col gap-2 rounded-lg bg-black/60 p-3 text-sm backdrop-blur-sm">
       <div className="flex items-center gap-2">
-        <div className="font-semibold opacity-80">Phase 5 · voice chat</div>
+        <div className="font-semibold opacity-80">Voice chat</div>
         <StateChip state={turnState} micOn={micOn} />
         <button
           onClick={handleClear}

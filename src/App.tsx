@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import { Scene } from './vrm/Scene'
 import { ChatPanel } from './components/ChatPanel'
+import { CharacterPicker } from './components/CharacterPicker'
 
 export function App() {
   return (
@@ -15,10 +16,7 @@ export function App() {
         <Scene />
       </Suspense>
 
-      <div className="pointer-events-none absolute left-4 top-4 text-xs opacity-60">
-        AI Companion · Phase 5
-      </div>
-
+      <CharacterPicker />
       <ChatPanel />
     </div>
   )

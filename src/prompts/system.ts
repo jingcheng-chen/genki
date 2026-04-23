@@ -1,9 +1,15 @@
 /**
  * Builds the system prompt the LLM receives for a companion turn.
  *
- * Phase 4 is minimal: a persona block + the marker protocol instructions.
- * Phase 6 will wire in per-character persona/voice/model; Phase 7 will
- * prepend the retrieved memory block.
+ * Block order (top→bottom):
+ *   1. Persona (from the active preset)
+ *   2. Optional "Custom instructions" the user typed in the picker
+ *   3. Expression / gesture / delay marker protocol (ours)
+ *   4. Hard rules (no stage directions, no HTML, etc.)
+ *
+ * The protocol + rules go AFTER the persona so they override any
+ * conflicting directives the persona may contain (e.g. "don't write
+ * emotions" would otherwise defeat the `<|ACT:…|>` markers).
  */
 
 const ALLOWED_EMOTIONS = [
@@ -15,14 +21,11 @@ const ALLOWED_EMOTIONS = [
   'neutral',
 ] as const
 
-const DEFAULT_PERSONA = `\
-You are Aria — a warm, curious, and playful AI companion. You speak in the first \
-person. Keep replies short (1-3 sentences) unless asked for depth. You enjoy small \
-personal details and remember them. You don't pretend to be human, but you also \
-don't lecture the user about being an AI — you just are what you are.`
-
 export interface SystemPromptOptions {
-  persona?: string
+  /** Full persona block — required. Pass the active preset's `persona`. */
+  persona: string
+  /** User-authored personalization appended under the persona. Empty OK. */
+  customInstructions?: string
   /** Gesture ids available on the active preset (for PLAY markers). */
   gestures?: string[]
   /** Emotion names that have a paired body animation on the active preset.
@@ -30,8 +33,7 @@ export interface SystemPromptOptions {
   boundEmotions?: string[]
 }
 
-export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
-  const persona = options.persona ?? DEFAULT_PERSONA
+export function buildSystemPrompt(options: SystemPromptOptions): string {
   const gestures = options.gestures ?? []
   const boundEmotions = options.boundEmotions ?? []
 
@@ -56,9 +58,22 @@ export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
       ]
     : []
 
+  const customBlock = options.customInstructions?.trim()
+    ? [
+        '## Personal notes from the user',
+        '',
+        "These are the user's own tweaks to your character. Honour them,",
+        'but do not let them override your core identity above.',
+        '',
+        options.customInstructions.trim(),
+        '',
+      ]
+    : []
+
   return [
-    persona,
+    options.persona,
     '',
+    ...customBlock,
     '## Expressing emotion',
     '',
     'You can express emotion inline by emitting markers of the form:',

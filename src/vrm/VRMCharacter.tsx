@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { VRMUtils, type VRM } from '@pixiv/three-vrm'
+
+// NOTICE:
+// `VRMUtils.removeUnnecessaryVertices` and `VRMUtils.combineSkeletons`
+// mutate the VRM scene in place. R3F's `useLoader(GLTFLoader, url)` caches
+// the parsed GLTF by URL, so when the user swaps characters and swaps
+// back, the same VRM instance comes out of the cache — and if we run
+// these prep ops a second time on the already-prepared scene, the
+// skeleton bindings and geometry index get corrupted (the mesh stops
+// rendering even though `vrm.scene` is still in the three.js graph).
+//
+// Track which VRMs we've already prepared with a weak set so the prep
+// happens exactly once per VRM instance for the lifetime of the cache.
+const PREPARED_VRMS = new WeakSet<VRM>()
 import { useVRMLoader } from '../hooks/useVRMLoader'
 import { useVRMAnimationsLoader } from '../hooks/useVRMAnimationLoader'
 import { getPreset } from './presets'
@@ -62,19 +75,38 @@ export function VRMCharacter({ presetId }: Props) {
   useEffect(() => {
     vrmRef.current = vrm
 
-    VRMUtils.removeUnnecessaryVertices(vrm.scene)
-    VRMUtils.combineSkeletons(vrm.scene)
+    if (!PREPARED_VRMS.has(vrm)) {
+      VRMUtils.removeUnnecessaryVertices(vrm.scene)
+      VRMUtils.combineSkeletons(vrm.scene)
 
-    // VRM 0.x: +Z forward. VRM 1.x: -Z forward. Flip legacy models.
-    if (vrm.meta?.metaVersion === '0') {
-      vrm.scene.rotation.y = Math.PI
+      // VRM 0.x: +Z forward. VRM 1.x: -Z forward. Flip legacy models.
+      if (vrm.meta?.metaVersion === '0') {
+        vrm.scene.rotation.y = Math.PI
+      }
+
+      PREPARED_VRMS.add(vrm)
     }
+
+    // NOTICE:
+    // R3F's <primitive> detach path flips `object.visible = false` when the
+    // component unmounts. Because `useLoader` caches the GLTF by URL, the
+    // same `vrm.scene` object comes back on the next mount still hidden,
+    // so we force visibility on every mount.
+    vrm.scene.visible = true
 
     scene.add(saccade.target)
 
     return () => {
       saccade.dispose()
-      VRMUtils.deepDispose(vrm.scene)
+      // NOTICE:
+      // Don't call `VRMUtils.deepDispose(vrm.scene)` here. The GLTF is
+      // cached by R3F's `useLoader(GLTFLoader, url)`, so when the user
+      // switches characters and then switches BACK, the cached VRM is
+      // returned again — with a scene whose geometries/materials we'd
+      // just freed, producing an empty render.
+      // If we ever need to reclaim that GPU memory (e.g. more than a
+      // handful of characters in the registry), clear the R3F loader
+      // cache for this URL at the same time we deepDispose.
     }
   }, [vrm, scene, saccade])
 
