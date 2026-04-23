@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildSystemPrompt } from '../system'
+import { VRM_PRESETS } from '../../vrm/presets'
 
 /**
  * System-prompt block-order tests — pinned after the Phase 11 TTFT work.
@@ -44,6 +45,49 @@ describe('buildSystemPrompt block order', () => {
     // persona→rules span is identical across turns and gets cached.
     expect(idxCustom).toBeGreaterThan(idxRules)
     expect(idxMemory).toBeGreaterThan(idxCustom)
+  })
+
+  /**
+   * xAI / OpenRouter automatic prefix caching only kicks in once the
+   * shared prompt prefix is ~1024 tokens or larger. Measured LLM TTFT
+   * on turn 2+3 in the prior latency pass was ~4.8s — identical to
+   * turn 1 — because the compressed persona-only prefix was ~750 tokens
+   * (Mika) / ~870 tokens (Ani), below the auto-cache floor.
+   *
+   * The Marker-examples block is sized to push the stable prefix (no
+   * memory, no custom instructions) over 1024 tokens for every preset.
+   * This test locks that floor in so future trims to persona / protocol
+   * don't silently knock us back below the cache threshold.
+   *
+   * Token estimate: chars / 4 (intentionally crude — matches the rule
+   * of thumb we used when budgeting the examples block).
+   *
+   * @example
+   *   Mika empty-memory prompt → chars≈4621, tokens≈1155 (>= 1024).
+   *   Ani  empty-memory prompt → chars≈5098, tokens≈1275 (>= 1024).
+   */
+  it('keeps every preset\'s empty-memory prompt >= 1024 tokens (xAI cache floor)', () => {
+    const MIN_TOKENS = 1024
+    for (const preset of VRM_PRESETS) {
+      const gestures = preset.animations
+        .filter((a) => a.kind === 'gesture')
+        .map((a) => a.id)
+      const boundEmotions = preset.animations
+        .filter((a) => a.kind === 'emotion' && a.emotion)
+        .map((a) => a.emotion as string)
+      const prompt = buildSystemPrompt({
+        persona: preset.persona,
+        customInstructions: '',
+        memoryBlock: '',
+        gestures,
+        boundEmotions,
+      })
+      const approxTokens = Math.round(prompt.length / 4)
+      expect(
+        approxTokens,
+        `preset "${preset.id}" empty-memory prompt is ~${approxTokens} tokens, below xAI auto-cache floor of ${MIN_TOKENS}`,
+      ).toBeGreaterThanOrEqual(MIN_TOKENS)
+    }
   })
 
   /**

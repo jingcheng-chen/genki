@@ -8,15 +8,22 @@
  *
  *   1. Persona (stable per character)
  *   2. Expression / gesture / delay marker protocol (static)
- *   3. Hard rules (static — no stage directions, no HTML, etc.)
- *   4. Optional "Custom instructions" the user typed in the picker
+ *   3. Marker examples — persona-agnostic few-shots (static)
+ *   4. Hard rules (static — no stage directions, no HTML, etc.)
+ *   5. Optional "Custom instructions" the user typed in the picker
  *      (semi-stable — changes only when the user edits them)
- *   5. Optional memory block — recalled facts (fully dynamic, last)
+ *   6. Optional memory block — recalled facts (fully dynamic, last)
  *
- * The protocol + rules go right after the persona so they override any
- * conflicting directives the persona may contain (e.g. "don't write
- * emotions" would otherwise defeat the `<|ACT:…|>` markers), AND so
- * those blocks form part of the cacheable prefix.
+ * The protocol + examples + rules go right after the persona so they
+ * override any conflicting directives the persona may contain (e.g.
+ * "don't write emotions" would otherwise defeat the `<|ACT:…|>`
+ * markers), AND so those blocks form part of the cacheable prefix.
+ *
+ * The Marker examples block is deliberately persona-agnostic so it is
+ * byte-identical across Mika / Ani — both characters share the same
+ * cached prefix for the protocol + examples + rules span. The block
+ * also pushes the stable prefix over xAI's 1024-token auto-cache floor
+ * (persona alone was ~750-870 tokens, below the threshold).
  *
  * The memory block sits at the tail: it changes every turn, so putting
  * it last lets every preceding block stay identical across turns and
@@ -116,6 +123,45 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     '',
     'You can pause in your speech with `<|DELAY:0.6|>` (seconds, max 10).',
     'Use pauses to breathe or sound thoughtful — not as filler.',
+    '',
+    '## Marker examples',
+    '',
+    'These show how markers weave into natural speech. The marker fires at',
+    'its position in the stream — emit it just before the phrase it colours.',
+    '',
+    'Single-emotion replies:',
+    '',
+    '    <|ACT:{"emotion":"happy","intensity":0.8}|> Oh that is such a fun one!',
+    '    <|ACT:{"emotion":"sad","intensity":0.5}|> Mm, yeah, that one stings a little.',
+    '    <|ACT:{"emotion":"surprised","intensity":0.9}|> Wait, really? Okay tell me everything.',
+    '    <|ACT:{"emotion":"angry","intensity":0.4}|> Okay that is kind of annoying, not gonna lie.',
+    '    <|ACT:{"emotion":"relaxed","intensity":0.6}|> Mm. I like it quiet like this.',
+    '',
+    'Pausing to breathe or think:',
+    '',
+    '    Hmm, <|DELAY:0.4|> let me actually think about that for a sec.',
+    '    That is, <|DELAY:0.6|> honestly kind of a big question.',
+    '',
+    'Gestures triggered by content, not as decoration:',
+    '',
+    '    <|PLAY:jump|> Yes! That is exactly what I was hoping you would say.',
+    '    Alright, I am heading out. <|PLAY:goodbye|> Talk soon, okay?',
+    '    <|PLAY:clapping|> Okay, bravo, seriously, that is great.',
+    '    <|PLAY:dance|> Okay this song is making me move a little.',
+    '',
+    'Compound turn — multiple markers, one short reply:',
+    '',
+    '    <|ACT:{"emotion":"surprised","intensity":0.7}|> Tokyo? No way. <|DELAY:0.5|>',
+    '    <|ACT:{"emotion":"happy","intensity":0.8}|> Okay we are gonna have to compare',
+    '    favourite spots. What neighbourhood are you in?',
+    '',
+    'DO NOT narrate feelings or actions in prose — always use the markers:',
+    '',
+    '    BAD:  Happily, I say: That is great!',
+    '    GOOD: <|ACT:{"emotion":"happy","intensity":0.7}|> That is great!',
+    '',
+    '    BAD:  *waves goodbye* See you later!',
+    '    GOOD: <|PLAY:goodbye|> See you later!',
     '',
     '## Rules',
     '',
