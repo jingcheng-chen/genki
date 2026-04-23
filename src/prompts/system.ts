@@ -1,20 +1,26 @@
 /**
  * Builds the system prompt the LLM receives for a companion turn.
  *
- * Block order (top→bottom):
- *   1. Persona (from the active preset)
- *   2. Optional "Custom instructions" the user typed in the picker
- *   3. Optional memory block — recalled facts about the user
- *   4. Expression / gesture / delay marker protocol (ours)
- *   5. Hard rules (no stage directions, no HTML, etc.)
+ * Block order (top→bottom), chosen so the LEADING portion is identical
+ * across turns for a given character — OpenRouter + xAI apply automatic
+ * prefix caching at >1024 tokens, so keeping the stable blocks first
+ * maximises cache hits on turns 2+.
  *
- * The protocol + rules go AFTER the persona so they override any
+ *   1. Persona (stable per character)
+ *   2. Expression / gesture / delay marker protocol (static)
+ *   3. Hard rules (static — no stage directions, no HTML, etc.)
+ *   4. Optional "Custom instructions" the user typed in the picker
+ *      (semi-stable — changes only when the user edits them)
+ *   5. Optional memory block — recalled facts (fully dynamic, last)
+ *
+ * The protocol + rules go right after the persona so they override any
  * conflicting directives the persona may contain (e.g. "don't write
- * emotions" would otherwise defeat the `<|ACT:…|>` markers).
+ * emotions" would otherwise defeat the `<|ACT:…|>` markers), AND so
+ * those blocks form part of the cacheable prefix.
  *
- * The memory block sits ABOVE the marker protocol so the model treats
- * recalled facts as fresh, in-character knowledge rather than as
- * stage-direction instructions.
+ * The memory block sits at the tail: it changes every turn, so putting
+ * it last lets every preceding block stay identical across turns and
+ * actually hit the provider's prefix cache.
  */
 
 const ALLOWED_EMOTIONS = [
@@ -86,11 +92,13 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     ? [options.memoryBlock.trim(), '']
     : []
 
+  // Order is deliberate: persona → static protocol blocks → static rules
+  // form the cacheable prefix. Dynamic blocks (customInstructions,
+  // memoryBlock) follow so changes to them don't invalidate the cache
+  // on every turn.
   return [
     options.persona,
     '',
-    ...customBlock,
-    ...memoryBlockLines,
     '## Expressing emotion',
     '',
     'You can express emotion inline by emitting markers of the form:',
@@ -121,5 +129,8 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     '  (no `<span>`, no `**bold**`, no colour styling). Your reply is read',
     '  aloud by a TTS that chokes on markup.',
     '- Reply in the same language the user is using.',
+    '',
+    ...customBlock,
+    ...memoryBlockLines,
   ].join('\n')
 }

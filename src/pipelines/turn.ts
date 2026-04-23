@@ -175,6 +175,8 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
         messages: options.messages,
         systemPrompt,
         signal: ac.signal,
+        turnId,
+        turnStartTs,
       })
 
       const streamStartTs = Date.now()

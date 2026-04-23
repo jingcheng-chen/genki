@@ -327,6 +327,8 @@ export function createTurnController(
         data: {
           totalMs: Date.now() - turnStartTs,
           stages: {
+            llmFetchSentMs: null,
+            llmFirstByteMs: null,
             llmFirstTokenMs: null,
             ttsFirstAudioMs: null,
             totalMs: Date.now() - turnStartTs,

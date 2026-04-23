@@ -43,6 +43,8 @@ export function MetricsTab({ events }: Props) {
     [events],
   )
 
+  const fetchSent = percentiles(latencies.llmFetchSent)
+  const firstByte = percentiles(latencies.llmFirstByte)
   const think = percentiles(latencies.llmFirstToken)
   const audio = percentiles(latencies.ttsFirstAudio)
   const total = percentiles(latencies.total)
@@ -82,6 +84,19 @@ export function MetricsTab({ events }: Props) {
           label="Turn total"
           stats={total}
           colorClass="bg-zinc-700"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <LatencyCard
+          label="Fetch sent"
+          stats={fetchSent}
+          colorClass="bg-indigo-900"
+        />
+        <LatencyCard
+          label="First byte (xAI prefill)"
+          stats={firstByte}
+          colorClass="bg-violet-900"
         />
       </div>
 
@@ -142,18 +157,27 @@ function TurnBar({
   maxMs: number
   turnId: string
   stages: {
+    llmFetchSentMs: number | null
+    llmFirstByteMs: number | null
     llmFirstTokenMs: number | null
     ttsFirstAudioMs: number | null
     totalMs: number | null
   }
 }) {
-  const think = stages.llmFirstTokenMs ?? 0
-  // "speaking" = time between first token and first audio (TTS latency
-  // net of the think portion). Grey tail is the rest.
-  const audioAt = stages.ttsFirstAudioMs ?? think
-  const speaking = Math.max(0, audioAt - think)
-  const total = stages.totalMs ?? audioAt
-  const tail = Math.max(0, total - audioAt)
+  // Stack: [network→fetch-sent] [fetch-sent→first-byte (xAI prefill)]
+  //        [first-byte→first-token (categorizer)] [first-token→first-audio]
+  //        [first-audio→end]
+  const fetchSent = stages.llmFetchSentMs ?? 0
+  const firstByte = Math.max(stages.llmFirstByteMs ?? fetchSent, fetchSent)
+  const firstToken = Math.max(stages.llmFirstTokenMs ?? firstByte, firstByte)
+  const audioAt = Math.max(stages.ttsFirstAudioMs ?? firstToken, firstToken)
+  const total = Math.max(stages.totalMs ?? audioAt, audioAt)
+
+  const networkMs = fetchSent
+  const prefillMs = firstByte - fetchSent
+  const decodeMs = firstToken - firstByte
+  const speaking = audioAt - firstToken
+  const tail = total - audioAt
 
   const pct = (ms: number) => `${Math.min(100, (ms / maxMs) * 100)}%`
 
@@ -163,7 +187,9 @@ function TurnBar({
         {turnId.slice(-8)}
       </span>
       <div className="flex h-3 flex-1 overflow-hidden rounded bg-zinc-900">
-        <div className="bg-sky-700" style={{ width: pct(think) }} />
+        <div className="bg-indigo-700" style={{ width: pct(networkMs) }} />
+        <div className="bg-violet-700" style={{ width: pct(prefillMs) }} />
+        <div className="bg-sky-700" style={{ width: pct(decodeMs) }} />
         <div className="bg-emerald-700" style={{ width: pct(speaking) }} />
         <div className="bg-slate-600" style={{ width: pct(tail) }} />
       </div>

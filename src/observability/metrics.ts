@@ -8,6 +8,12 @@ import type { TraceEvent } from './types'
 
 /** Per-turn stage timings computed from tracer events. */
 export interface TurnStages {
+  /** ms from `turn.start` to `llm.fetch-sent` — client-side fetch
+   *  promise resolved; TCP + server-to-OpenRouter handshake done. */
+  llmFetchSentMs: number | null
+  /** ms from `turn.start` to `llm.first-byte` — first Uint8Array off
+   *  the Response body. Captures xAI prefill + OpenRouter relay. */
+  llmFirstByteMs: number | null
   /** ms from `turn.start` to `llm.first-token`. null if no first-token event. */
   llmFirstTokenMs: number | null
   /** ms from `turn.start` to `turn.first-audio`. null if no audio started. */
@@ -41,6 +47,8 @@ export function computeTurnStages(
   turnId: string,
 ): TurnStages {
   let startTs: number | null = null
+  let fetchSentMs: number | null = null
+  let firstByteMs: number | null = null
   let firstTokenMs: number | null = null
   let firstAudioMs: number | null = null
   let totalMs: number | null = null
@@ -49,6 +57,12 @@ export function computeTurnStages(
     if (ev.turnId !== turnId) continue
     if (ev.category === 'turn.start') {
       startTs = ev.ts
+    } else if (ev.category === 'llm.fetch-sent') {
+      const d = ev.data as { elapsedMs?: number } | undefined
+      if (d && typeof d.elapsedMs === 'number') fetchSentMs = d.elapsedMs
+    } else if (ev.category === 'llm.first-byte') {
+      const d = ev.data as { elapsedMs?: number } | undefined
+      if (d && typeof d.elapsedMs === 'number') firstByteMs = d.elapsedMs
     } else if (ev.category === 'llm.first-token') {
       const d = ev.data as { ms?: number } | undefined
       if (d && typeof d.ms === 'number') firstTokenMs = d.ms
@@ -69,6 +83,18 @@ export function computeTurnStages(
     )
     if (endEv) totalMs = endEv.ts - startTs
   }
+  if (startTs !== null && fetchSentMs === null) {
+    const ev = events.find(
+      (e) => e.turnId === turnId && e.category === 'llm.fetch-sent',
+    )
+    if (ev) fetchSentMs = ev.ts - startTs
+  }
+  if (startTs !== null && firstByteMs === null) {
+    const ev = events.find(
+      (e) => e.turnId === turnId && e.category === 'llm.first-byte',
+    )
+    if (ev) firstByteMs = ev.ts - startTs
+  }
   if (startTs !== null && firstTokenMs === null) {
     const ev = events.find(
       (e) => e.turnId === turnId && e.category === 'llm.first-token',
@@ -83,6 +109,8 @@ export function computeTurnStages(
   }
 
   return {
+    llmFetchSentMs: fetchSentMs,
+    llmFirstByteMs: firstByteMs,
     llmFirstTokenMs: firstTokenMs,
     ttsFirstAudioMs: firstAudioMs,
     totalMs,
@@ -173,12 +201,20 @@ export function recentLatencies(
   events: TraceEvent[],
   limit = 20,
 ): {
+  llmFetchSent: number[]
+  llmFirstByte: number[]
   llmFirstToken: number[]
   ttsFirstAudio: number[]
   total: number[]
 } {
   const all = recentTurnStages(events, limit)
   return {
+    llmFetchSent: all
+      .map((r) => r.stages.llmFetchSentMs)
+      .filter((n): n is number => n !== null),
+    llmFirstByte: all
+      .map((r) => r.stages.llmFirstByteMs)
+      .filter((n): n is number => n !== null),
     llmFirstToken: all
       .map((r) => r.stages.llmFirstTokenMs)
       .filter((n): n is number => n !== null),

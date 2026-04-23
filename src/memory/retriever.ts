@@ -4,7 +4,7 @@
  * Selection policy (PLAN.md §5):
  *  - All `durable` + `preference` + `relational` facts (always-in-context;
  *    they're small and carry identity-level signal).
- *  - Top-K (K=10) of `episodic` + `emotional` by `importance × retention`.
+ *  - Top-K (K=5) of `episodic` + `emotional` by `importance × retention`.
  *  - All `compressionLevel >= 2` summaries (already compact by design).
  *
  * Output is grouped into three human-readable sections:
@@ -25,8 +25,12 @@ import type { MemoryFact } from '../types/memory'
  * Number of episodic/emotional facts surfaced for the "Recent context"
  * section. Lower keeps prompts cheap; higher reduces the chance of the
  * model forgetting a mid-importance episode it needs this turn.
+ *
+ * Tuned down from 10 → 5 after TTFT work (Phase 11): the marginal facts
+ * beyond top-5 rarely affected the reply, but the ~100–200 tokens they
+ * cost sat above the memory block in the prompt and delayed first token.
  */
-export const TOP_K_EPISODIC = 10
+export const TOP_K_EPISODIC = 5
 
 /**
  * Heading the block opens with. Matches PLAN.md §5's retriever output

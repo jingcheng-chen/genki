@@ -44,6 +44,26 @@ describe('computeTurnStages', () => {
 
   /**
    * @example
+   *   llm.fetch-sent@180 + llm.first-byte@780 are picked up as their own
+   *   fields — needed for the Metrics tab's "network / prefill / decode"
+   *   split.
+   */
+  it('exposes fetch-sent and first-byte as separate stage spans', () => {
+    const events: TraceEvent[] = [
+      ev('turn.start', { userText: 'hi' }, 't1', 100),
+      ev('llm.fetch-sent', { elapsedMs: 80 }, 't1', 180),
+      ev('llm.first-byte', { elapsedMs: 680 }, 't1', 780),
+      ev('llm.first-token', { ms: 740 }, 't1', 840),
+      ev('turn.end', { totalMs: 4300 }, 't1', 4400),
+    ]
+    const stages = computeTurnStages(events, 't1')
+    expect(stages.llmFetchSentMs).toBe(80)
+    expect(stages.llmFirstByteMs).toBe(680)
+    expect(stages.llmFirstTokenMs).toBe(740)
+  })
+
+  /**
+   * @example
    *   events for another turn are ignored.
    */
   it('ignores events from other turns', () => {
@@ -89,6 +109,10 @@ describe('computeTurnStages', () => {
     expect(stages.llmFirstTokenMs).toBe(800)
     expect(stages.ttsFirstAudioMs).toBeNull()
     expect(stages.totalMs).toBeNull()
+    // Network-phase fields are also absent for a turn that never got
+    // its fetch promise resolved.
+    expect(stages.llmFetchSentMs).toBeNull()
+    expect(stages.llmFirstByteMs).toBeNull()
   })
 })
 

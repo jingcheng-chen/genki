@@ -16,6 +16,15 @@
 export const TRACE_CATEGORIES = [
   // LLM
   'llm.request',
+  // Network round-trip split — lets us separate our-side fetch setup
+  // from OpenRouter → xAI prefill from our own categorizer overhead.
+  //
+  //   llm.request       → call start
+  //   llm.fetch-sent    → fetch() promise resolved; waiting on bytes
+  //   llm.first-byte    → first Uint8Array off the ReadableStream
+  //   llm.first-token   → first decoded delta into the categorizer
+  'llm.fetch-sent',
+  'llm.first-byte',
   'llm.raw-delta',
   'llm.first-token',
   'llm.stream-end',
@@ -114,6 +123,33 @@ export interface LlmRawDeltaData {
 export interface LlmFirstTokenData {
   /** ms from turn.start to first delta. */
   ms: number
+}
+
+/**
+ * `llm.fetch-sent` — emitted right after the client's `fetch('/api/chat', …)`
+ * promise resolves with a Response. At that point the TCP handshake is
+ * done and the server has begun streaming headers, but no bytes have
+ * arrived yet. The gap (llm.request → llm.fetch-sent) captures:
+ *   - our client→server network
+ *   - our Hono handler doing its own fetch() to OpenRouter
+ *   - OpenRouter's own TCP handshake to xAI
+ * but NOT xAI's prefill or token generation.
+ */
+export interface LlmFetchSentData {
+  /** ms from turn.start (or call start when outside a turn) to the fetch()
+   *  promise resolving. */
+  elapsedMs: number
+}
+
+/**
+ * `llm.first-byte` — emitted on the first `Uint8Array` off the Response
+ * body's ReadableStream. The gap (llm.fetch-sent → llm.first-byte) is
+ * almost entirely xAI's prefill cost (plus OpenRouter's relay), which is
+ * the piece we're hoping to shrink with prefix caching.
+ */
+export interface LlmFirstByteData {
+  /** ms from turn.start (or call start) to the first decoded chunk. */
+  elapsedMs: number
 }
 
 export interface LlmStreamEndData {
@@ -229,6 +265,8 @@ export interface TurnFirstAudioData {
 export interface TurnEndData {
   totalMs: number
   stages: {
+    llmFetchSentMs: number | null
+    llmFirstByteMs: number | null
     llmFirstTokenMs: number | null
     ttsFirstAudioMs: number | null
     totalMs: number
