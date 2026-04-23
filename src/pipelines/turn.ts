@@ -22,6 +22,13 @@ export interface RunTurnOptions {
   persona: string
   /** User-authored per-character override appended below the persona. */
   customInstructions?: string
+  /** Pre-rendered memory block from the retriever. Empty string = first
+   *  turn / no memory yet — the system prompt omits the section. */
+  memoryBlock?: string
+  /** IDs of the facts surfaced in `memoryBlock`. Opaque to `runTurn`; the
+   *  caller forwards them to the extractor so it can reason about which
+   *  facts were "in context" this turn. */
+  retrievedFactIds?: string[]
   /** ElevenLabs voice id for this turn's TTS. Defaults to the server's
    *  fallback voice (Rachel) if omitted. */
   voiceId?: string
@@ -34,6 +41,13 @@ export interface RunTurnOptions {
   onGesture?: (id: string) => void
   /** Called when the LLM stream finishes (before playback finishes). */
   onStreamEnd?: () => void
+  /** Called after the stream ends with the full-turn payload the extractor
+   *  needs. Fire-and-forget — never awaited from inside `runTurn`. */
+  onTurnComplete?: (result: {
+    userTurn: string
+    assistantTurn: string
+    retrievedFactIds: string[]
+  }) => void
 }
 
 /**
@@ -52,12 +66,19 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
   const expression = getExpressionController()
   const animation = getActiveAnimationController()
 
+  // Collect the post-marker-strip assistant text for the extractor.
+  // This is the "clean" text the TTS received, which is what the
+  // memory curator should reason over — marker tokens would pollute
+  // the extraction.
+  let assistantAccum = ''
+
   // Chain the parsers: LLM → categorizer → marker parser → outputs
   const marker = createMarkerParser({
     onLiteral: (text) => {
       // Strip a bare marker that a model sometimes emits as `[ACT:happy]`
       // by accident — it's not valid JSON, don't read it aloud.
       speaker.consume(text)
+      assistantAccum += text
       options.onAssistantText?.(text)
     },
     onSpecial: async (raw) => {
@@ -96,6 +117,7 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
       const systemPrompt = buildSystemPrompt({
         persona: options.persona,
         customInstructions: options.customInstructions,
+        memoryBlock: options.memoryBlock,
         gestures: animation?.getGestureIds() ?? [],
         boundEmotions: animation?.getBoundEmotions() ?? [],
       })
@@ -120,6 +142,20 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
       await categorizer.flush()
       await marker.flush()
       options.onStreamEnd?.()
+
+      // Fire the extractor hook BEFORE awaiting final playback. The user
+      // controller uses it to enqueue background memory work, which
+      // should race playback rather than wait on it.
+      if (options.onTurnComplete) {
+        const lastUser = [...options.messages]
+          .reverse()
+          .find((m) => m.role === 'user')
+        options.onTurnComplete({
+          userTurn: lastUser?.content ?? '',
+          assistantTurn: assistantAccum,
+          retrievedFactIds: options.retrievedFactIds ?? [],
+        })
+      }
 
       await speaker.end()
     } catch (err) {

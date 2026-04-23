@@ -4,12 +4,17 @@
  * Block order (top→bottom):
  *   1. Persona (from the active preset)
  *   2. Optional "Custom instructions" the user typed in the picker
- *   3. Expression / gesture / delay marker protocol (ours)
- *   4. Hard rules (no stage directions, no HTML, etc.)
+ *   3. Optional memory block — recalled facts about the user
+ *   4. Expression / gesture / delay marker protocol (ours)
+ *   5. Hard rules (no stage directions, no HTML, etc.)
  *
  * The protocol + rules go AFTER the persona so they override any
  * conflicting directives the persona may contain (e.g. "don't write
  * emotions" would otherwise defeat the `<|ACT:…|>` markers).
+ *
+ * The memory block sits ABOVE the marker protocol so the model treats
+ * recalled facts as fresh, in-character knowledge rather than as
+ * stage-direction instructions.
  */
 
 const ALLOWED_EMOTIONS = [
@@ -26,6 +31,10 @@ export interface SystemPromptOptions {
   persona: string
   /** User-authored personalization appended under the persona. Empty OK. */
   customInstructions?: string
+  /** Pre-rendered memory block (retriever output). Starts with its own
+   *  `## What you remember about them` heading. Empty string = no memory
+   *  block at all (first-turn behavior). */
+  memoryBlock?: string
   /** Gesture ids available on the active preset (for PLAY markers). */
   gestures?: string[]
   /** Emotion names that have a paired body animation on the active preset.
@@ -70,10 +79,18 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
       ]
     : []
 
+  // The retriever pre-renders the memory block with its own H2 heading
+  // so we just splice it in. Empty string means no memory yet — omit
+  // the section entirely rather than leaving a "What you remember" stub.
+  const memoryBlockLines = options.memoryBlock?.trim()
+    ? [options.memoryBlock.trim(), '']
+    : []
+
   return [
     options.persona,
     '',
     ...customBlock,
+    ...memoryBlockLines,
     '## Expressing emotion',
     '',
     'You can express emotion inline by emitting markers of the form:',

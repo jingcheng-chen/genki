@@ -47,6 +47,7 @@ export function ChatPanel() {
           const state = useCharacterStore.getState()
           const p = getPreset(state.activePresetId)
           return {
+            id: p.id,
             persona: p.persona,
             voiceId: p.voiceId,
             customInstructions: state.customInstructions[state.activePresetId],

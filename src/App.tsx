@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { Scene } from './vrm/Scene'
 import { ChatPanel } from './components/ChatPanel'
 import { CharacterPicker } from './components/CharacterPicker'
+import { MemoryInspector } from './components/MemoryInspector'
 
 export function App() {
   return (
@@ -18,6 +19,7 @@ export function App() {
 
       <CharacterPicker />
       <ChatPanel />
+      {import.meta.env.DEV && <MemoryInspector />}
     </div>
   )
 }

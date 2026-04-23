@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server'
 import { tts } from './routes/tts'
 import { chat } from './routes/chat'
 import { stt } from './routes/stt'
+import { memory } from './routes/memory'
 
 const app = new Hono()
 
@@ -22,6 +23,7 @@ app.get('/api/health', (c) =>
 app.route('/api/tts', tts)
 app.route('/api/chat', chat)
 app.route('/api/stt', stt)
+app.route('/api/memory', memory)
 
 const port = Number(process.env.PORT ?? 8787)
 

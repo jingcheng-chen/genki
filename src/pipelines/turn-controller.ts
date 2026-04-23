@@ -2,6 +2,9 @@ import { runTurn, type TurnHandle } from './turn'
 import { transcribe } from '../adapters/stt'
 import { createMicVAD, type VadHandle } from '../audio/vad'
 import type { ChatMessage } from '../adapters/llm'
+import { buildMemoryBlock } from '../memory/retriever'
+import { enqueueExtraction } from '../memory/extractor'
+import { maybeRunCompaction } from '../memory/compactor'
 
 /**
  * Phase 5 orchestrator — owns the mic VAD, the live transcript, the chat
@@ -34,6 +37,8 @@ export type TurnState =
  * store state (e.g. right after the user flipped between Mika and Ani).
  */
 export interface TurnPreset {
+  /** Preset id — used as the memory file key. */
+  id: string
   persona: string
   customInstructions?: string
   voiceId?: string
@@ -205,10 +210,28 @@ export function createTurnController(
     setState('thinking')
 
     const preset = options.getPreset()
+
+    // Assemble the memory block for this turn. A failed load shouldn't
+    // take down the conversation — log and proceed with an empty block.
+    let memoryBlock = ''
+    let retrievedFactIds: string[] = []
+    try {
+      const memo = await buildMemoryBlock(preset.id)
+      memoryBlock = memo.text
+      retrievedFactIds = memo.retrievedFactIds
+    } catch (err) {
+      console.error(
+        '[turn-controller] memory load failed',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+
     const handle = runTurn({
       messages: history.map((t) => ({ role: t.role, content: t.content })),
       persona: preset.persona,
       customInstructions: preset.customInstructions,
+      memoryBlock,
+      retrievedFactIds,
       voiceId: preset.voiceId,
       onAssistantText: (delta) => {
         if (state === 'thinking') setState('speaking')
@@ -233,6 +256,21 @@ export function createTurnController(
         })
         resetLive()
         emit({ type: 'history' })
+      },
+      onTurnComplete: ({ userTurn, assistantTurn }) => {
+        // Fire-and-forget background extraction + compaction. The
+        // retriever-picked ids go to the extractor so it knows what
+        // was in context; the compactor is turn-counter-driven and
+        // doesn't need the ids.
+        if (assistantTurn.trim()) {
+          enqueueExtraction({
+            characterId: preset.id,
+            userTurn,
+            assistantTurn,
+            retrievedFactIds,
+          })
+          maybeRunCompaction(preset.id)
+        }
       },
     })
     currentTurn = handle
