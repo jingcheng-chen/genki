@@ -39,6 +39,26 @@ const ALLOWED_EMOTIONS = [
   'neutral',
 ] as const
 
+/**
+ * Coarse time-of-day bucket used by the system prompt. Matches the spirit
+ * of the reference Statsig config's `<<getTimeOfDay>>` template variable
+ * (see `ani.reference.yml`) — gives the model an ambient hint so replies
+ * like "morning" / "late" feel grounded.
+ *
+ * Boundaries: 5-12 morning, 12-17 afternoon, 17-22 evening, 22-5 late night.
+ *
+ * This is a pure function of local hour — it runs on the client (in the
+ * browser) so we get the user's wall-clock naturally. Server-rendered
+ * prompts would need the user's tz on the request; not applicable here.
+ */
+export function getTimeOfDay(now: Date = new Date()): string {
+  const h = now.getHours()
+  if (h >= 5 && h < 12) return 'morning'
+  if (h >= 12 && h < 17) return 'afternoon'
+  if (h >= 17 && h < 22) return 'evening'
+  return 'late night'
+}
+
 export interface SystemPromptOptions {
   /** Full persona block — required. Pass the active preset's `persona`. */
   persona: string
@@ -175,6 +195,15 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     '  (no `<span>`, no `**bold**`, no colour styling). Your reply is read',
     '  aloud by a TTS that chokes on markup.',
     '- Reply in the same language the user is using.',
+    '',
+    // Time-of-day sits in the dynamic tail so the leading static span
+    // (persona + protocol + rules) stays byte-identical across turns and
+    // hits xAI's prefix cache. The bucket only flips ~4x per day, so the
+    // invalidation cost is negligible — and it gives the model a real
+    // ambient cue for lines like "morning" or "still up?".
+    '## Right now',
+    '',
+    `- Time of day for the user: ${getTimeOfDay()}.`,
     '',
     ...customBlock,
     ...memoryBlockLines,

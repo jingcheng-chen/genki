@@ -37,10 +37,15 @@ const PLACEHOLDER_SUGGESTION = "Try: 'Tell me about yourself'"
 
 export function ChatPanel() {
   const sceneStatus = useSceneStore((s) => s.status)
-  // The gate keeps the panel visually muted before first start so the
-  // user knows where to click. `ready` means the gate's audio init
-  // finished — dismissed by the StartGate component itself.
-  const audioReady = sceneStatus === 'ready'
+  const audioInitialized = useSceneStore((s) => s.audioInitialized)
+  // `audioReady` is true when BOTH: the scene state machine is at 'ready'
+  // (VRM loaded + bindings built) AND the lip-sync driver has been bound
+  // (user clicked Start → ensureLipSyncDriver resolved). We used to key
+  // off `status === 'ready'` alone, but the state machine passes through
+  // 'ready' once BEFORE audio init (showing the StartGate) and again
+  // AFTER audio init — the single-flag form would greet during the first
+  // pass and blow up with "Lip-sync driver not ready".
+  const audioReady = sceneStatus === 'ready' && audioInitialized
 
   const activePresetId = useCharacterStore((s) => s.activePresetId)
 
@@ -119,6 +124,31 @@ export function ChatPanel() {
     controller.abort()
     controller.clearHistory()
   }, [activePresetId, controller])
+
+  // Starter / returner greeting — fires once per (preset × page-load) as
+  // soon as audio is ready. The `greetedPresets` counter in the character
+  // store persists across reloads, so visit-one gets a starter and
+  // every subsequent open gets a returner even after a full page refresh.
+  // `greetedThisMount` dedupes within a single mount so a preset switch
+  // back-and-forth still triggers a fresh greeting per direction.
+  const greetedThisMount = useRef<string | null>(null)
+  useEffect(() => {
+    if (!audioReady) return
+    if (greetedThisMount.current === activePresetId) return
+
+    const preset = getPreset(activePresetId)
+    const { greetedPresets, recordGreeting } = useCharacterStore.getState()
+    const count = greetedPresets[activePresetId] ?? 0
+    const pool = count === 0 ? preset.starters : preset.returners
+    if (pool.length === 0) return
+
+    const line = pool[Math.floor(Math.random() * pool.length)]
+    greetedThisMount.current = activePresetId
+    recordGreeting(activePresetId)
+    void controller.speakGreeting(line).catch(() => {
+      // Errors are already surfaced via the controller's 'error' event.
+    })
+  }, [audioReady, activePresetId, controller])
 
   async function handleToggleMic() {
     if (!audioReady) return

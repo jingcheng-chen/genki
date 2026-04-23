@@ -39,6 +39,7 @@ export function StartGate() {
   const errorMessage = useSceneStore((s) => s.errorMessage)
   const setStatus = useSceneStore((s) => s.setStatus)
   const setError = useSceneStore((s) => s.setError)
+  const setAudioInitialized = useSceneStore((s) => s.setAudioInitialized)
   const reset = useSceneStore((s) => s.reset)
 
   // Once the user successfully starts, we hide the gate for the rest of
@@ -59,6 +60,11 @@ export function StartGate() {
       // so one await handles both the WebAudio gesture and the wlipsync
       // bootstrap (WASM compile + worklet registration).
       await ensureLipSyncDriver()
+      // Mark the lip-sync driver as bound so downstream consumers
+      // (ChatPanel greeting effect, etc.) can distinguish "ready after
+      // VRM parse" from "ready after audio init" — both land on
+      // status === 'ready' in the state machine.
+      setAudioInitialized()
       // Flip back to `ready` so ChatPanel un-dims. Kick off fade-out
       // simultaneously — the gate is about to unmount anyway, so the
       // button label briefly reverting is hidden by the fade.

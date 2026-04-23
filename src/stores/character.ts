@@ -30,12 +30,24 @@ import { DEFAULT_PRESET_ID } from '../vrm/presets'
 interface CharacterState {
   activePresetId: string
   customInstructions: Record<string, string>
+  /**
+   * How many times a greeting has been played for each preset, across all
+   * page loads. 0 = never → pick a starter; >= 1 → pick a returner. Drives
+   * the same "first-meeting vs. welcome-back" distinction as the reference
+   * Statsig config (`starters` vs `returners` in `ani.reference.yml`).
+   *
+   * Missing keys (new preset added in a later build) are treated as 0 by
+   * the reader, so we don't need a migration when the preset registry
+   * grows.
+   */
+  greetedPresets: Record<string, number>
   /** True once persist middleware has finished loading from localStorage.
    *  Consumers (StartGate) can treat this as the gate for "know which
    *  character to render". */
   hasHydrated: boolean
   setActivePresetId: (id: string) => void
   setCustomInstructions: (presetId: string, text: string) => void
+  recordGreeting: (presetId: string) => void
   setHasHydrated: (v: boolean) => void
 }
 
@@ -44,6 +56,7 @@ export const useCharacterStore = create<CharacterState>()(
     (set) => ({
       activePresetId: DEFAULT_PRESET_ID,
       customInstructions: {},
+      greetedPresets: {},
       // Zustand's persist middleware sets this synchronously below during
       // onRehydrateStorage's finish callback. Start true-adjacent-to-load
       // so the UI doesn't block on an empty cache.
@@ -53,11 +66,21 @@ export const useCharacterStore = create<CharacterState>()(
         set((state) => ({
           customInstructions: { ...state.customInstructions, [presetId]: text },
         })),
+      recordGreeting: (presetId) =>
+        set((state) => {
+          const prev = state.greetedPresets[presetId] ?? 0
+          return {
+            greetedPresets: { ...state.greetedPresets, [presetId]: prev + 1 },
+          }
+        }),
       setHasHydrated: (v) => set({ hasHydrated: v }),
     }),
     {
       // v1 key — bump the suffix if the shape changes (bigger than one key
-      // in a map, or we rename `activePresetId`, etc.).
+      // in a map, or we rename `activePresetId`, etc.). Adding a new field
+      // (greetedPresets) is a widening change: existing users rehydrate
+      // with the key missing, so `greetedPresets ?? {}` at read time keeps
+      // us compatible without a version bump.
       name: 'ai-companion-character-v1',
       // Exclude the hydration flag from the serialized state so it always
       // starts false and flips true after restoration. Everything else
@@ -65,6 +88,7 @@ export const useCharacterStore = create<CharacterState>()(
       partialize: (state) => ({
         activePresetId: state.activePresetId,
         customInstructions: state.customInstructions,
+        greetedPresets: state.greetedPresets,
       }),
       onRehydrateStorage: () => (state, error) => {
         // If rehydrate errored (quota exceeded, private mode, …), we

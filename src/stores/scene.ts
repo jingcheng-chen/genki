@@ -39,16 +39,29 @@ export interface SceneState {
    *  it's allowed to be stale. */
   vrmProgress: number
   errorMessage: string | null
+  /**
+   * Flips true exactly once per page load, right after `ensureLipSyncDriver()`
+   * resolves in StartGate. Consumers that need "the lip-sync driver is
+   * bound and the AudioContext is running" should gate on this flag —
+   * `status === 'ready'` is ambiguous because the state machine lands on
+   * `ready` twice (once after VRM parse, then again after audio init).
+   */
+  audioInitialized: boolean
   setStatus: (s: SceneStatus) => void
   setVrmProgress: (p: number) => void
   setError: (message: string) => void
+  setAudioInitialized: () => void
   reset: () => void
 }
 
-const INITIAL: Pick<SceneState, 'status' | 'vrmProgress' | 'errorMessage'> = {
+const INITIAL: Pick<
+  SceneState,
+  'status' | 'vrmProgress' | 'errorMessage' | 'audioInitialized'
+> = {
   status: 'idle',
   vrmProgress: 0,
   errorMessage: null,
+  audioInitialized: false,
 }
 
 export const useSceneStore = create<SceneState>()((set) => ({
@@ -69,5 +82,6 @@ export const useSceneStore = create<SceneState>()((set) => ({
     set({ vrmProgress: clamped })
   },
   setError: (message) => set({ status: 'error', errorMessage: message }),
+  setAudioInitialized: () => set({ audioInitialized: true }),
   reset: () => set({ ...INITIAL }),
 }))

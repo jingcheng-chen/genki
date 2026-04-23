@@ -1,4 +1,5 @@
 import { runTurn, type TurnHandle } from './turn'
+import { speak, type SpeakHandle } from './speech-pipeline'
 import { transcribe } from '../adapters/stt'
 import { createMicVAD, type VadHandle } from '../audio/vad'
 import type { ChatMessage } from '../adapters/llm'
@@ -85,6 +86,14 @@ export interface TurnController {
   stopMic: () => Promise<void>
 
   sendText: (text: string) => void
+  /**
+   * Speak a pre-written line through the TTS one-shot (no LLM call) and
+   * push it to history as an assistant turn. Used for starters / returners
+   * — the character greets the user without consuming a model call. Falls
+   * through silently when another turn is already in flight or when the
+   * controller is busy.
+   */
+  speakGreeting: (text: string) => Promise<void>
   abort: () => void
   clearHistory: () => void
 
@@ -107,6 +116,7 @@ export function createTurnController(
   let micOn = false
 
   let currentTurn: TurnHandle | null = null
+  let currentGreeting: SpeakHandle | null = null
   let bargeInTimer: ReturnType<typeof setTimeout> | null = null
 
   const listeners = new Set<(ev: TurnControllerEvent) => void>()
@@ -163,6 +173,11 @@ export function createTurnController(
     commitInterruptedAssistant()
     currentTurn?.abort()
     currentTurn = null
+    // A greeting playing when the user starts talking should stop the
+    // same way an LLM turn does — no partial-reply history entry though,
+    // since greetings are fixed strings already pushed in whole.
+    currentGreeting?.abort()
+    currentGreeting = null
     resetLive()
     setState('listening')
   }
@@ -176,6 +191,10 @@ export function createTurnController(
       currentTurn.abort()
       currentTurn = null
       resetLive()
+    }
+    if (currentGreeting) {
+      currentGreeting.abort()
+      currentGreeting = null
     }
 
     let userText = opts.text ?? ''
@@ -424,11 +443,54 @@ export function createTurnController(
       void handleUserInput({ text })
     },
 
+    async speakGreeting(text) {
+      // Only speak when nothing else is in flight — we don't want the
+      // greeting colliding with an assistant turn the user just kicked
+      // off, and we don't want to interrupt the user's own speech.
+      if (currentTurn || currentGreeting) return
+      if (state !== 'idle') return
+      const trimmed = text.trim()
+      if (!trimmed) return
+
+      const preset = options.getPreset()
+      setState('speaking')
+
+      const handle = speak(trimmed, { voiceId: preset.voiceId })
+      currentGreeting = handle
+
+      // Mirror the normal turn flow: push to history so the user sees
+      // what the character said. No emotions / markers on greetings —
+      // they're fixed strings, and we're not running them through the
+      // marker parser.
+      history.push({ role: 'assistant', content: trimmed })
+      emit({ type: 'history' })
+
+      try {
+        await handle.promise
+      } catch (err) {
+        emit({
+          type: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        })
+      } finally {
+        // Owner check: if fireBargeIn / handleUserInput already cleared
+        // `currentGreeting`, they also moved state past 'speaking' — we
+        // must not clobber that here. Only the natural-completion path
+        // (owner still ourselves) should return to idle.
+        if (currentGreeting === handle) {
+          currentGreeting = null
+          setState('idle')
+        }
+      }
+    },
+
     abort() {
       cancelBargeInTimer()
       commitInterruptedAssistant()
       currentTurn?.abort()
       currentTurn = null
+      currentGreeting?.abort()
+      currentGreeting = null
       resetLive()
       setState('idle')
     },
@@ -450,6 +512,8 @@ export function createTurnController(
       cancelBargeInTimer()
       currentTurn?.abort()
       currentTurn = null
+      currentGreeting?.abort()
+      currentGreeting = null
       if (vad) {
         await vad.destroy()
         vad = null
