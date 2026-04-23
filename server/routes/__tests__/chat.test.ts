@@ -2,26 +2,22 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { Hono } from 'hono'
 
 /**
- * Prefix-caching wire contract test — pinned after the Pass-3 latency work.
+ * xAI wire contract test — pinned after the direct-provider swap.
  *
- * The chat route attaches `providerOptions.openrouter.cacheControl =
- * { type: 'ephemeral' }` to the system message. The OpenRouter AI-SDK
- * provider is contractually responsible for translating that into a
- * per-message `cache_control` field on the system content part that gets
- * POSTed to `https://openrouter.ai/api/v1/chat/completions`. xAI (through
- * OpenRouter's Anthropic-cache-hint passthrough) uses this as the
- * breakpoint for its automatic prefix matcher.
+ * The chat route streams through `@ai-sdk/xai` against the regional
+ * endpoint (`eu-west-1.api.x.ai/v1` by default). This test intercepts
+ * the upstream fetch and asserts:
+ *   1. The request URL points at the regional xAI chat-completions path.
+ *   2. The model id on the wire is `grok-4-1-fast-non-reasoning` (xAI's
+ *      native id, NOT the old OpenRouter slug `x-ai/grok-4.1-fast`).
+ *   3. The `Authorization: Bearer …` header uses the server's XAI_API_KEY.
+ *   4. The system message flows through as a plain string — no OpenRouter-
+ *      specific `cache_control` payload. xAI's automatic prefix cache
+ *      does not require a breakpoint.
  *
- * This test intercepts the upstream fetch and asserts:
- *   1. The wire body has exactly one system message.
- *   2. That system message's content[0] carries
- *      `cache_control: { type: 'ephemeral' }`.
- *   3. User/assistant messages DO NOT carry cache_control (they're dynamic
- *      and shouldn't be marked cacheable).
- *
- * Without this test, a future SDK upgrade that renames the provider option
- * (e.g. `cacheControl` → `promptCaching`) would silently regress TTFT on
- * turns 2+ back to the un-cached 3-4s baseline and we'd have no CI signal.
+ * Without this test, a future SDK upgrade that changes the baseURL
+ * default, renames the model id, or re-introduces a cacheControl wrap
+ * would silently regress behaviour.
  */
 
 async function readBodyJson(request: Request): Promise<unknown> {
@@ -29,19 +25,29 @@ async function readBodyJson(request: Request): Promise<unknown> {
   return request.json()
 }
 
-let capturedBody: Record<string, unknown> | null = null
+interface CapturedRequest {
+  url: string
+  authHeader: string | null
+  body: Record<string, unknown>
+}
 
-function installFakeOpenRouterFetch(ssePayload: string) {
+let captured: CapturedRequest | null = null
+
+function installFakeXaiFetch(ssePayload: string) {
   // NOTICE:
-  // The OpenRouter provider streams an `text/event-stream` response shaped
-  // like OpenAI chat.completions.chunk lines. We feed a single `[DONE]`
-  // so the provider's SSE decoder exits cleanly without producing any
-  // content — enough to satisfy the streamText call, since we only care
-  // about the OUTBOUND request body.
+  // The xAI provider streams a `text/event-stream` response shaped like
+  // OpenAI chat.completions.chunk lines. We feed a single `[DONE]` so the
+  // provider's SSE decoder exits cleanly without producing any content —
+  // enough to satisfy the streamText call, since we only care about the
+  // OUTBOUND request.
   const fakeFetch: typeof fetch = async (input, init) => {
-    const req =
-      input instanceof Request ? input : new Request(String(input), init)
-    capturedBody = (await readBodyJson(req)) as Record<string, unknown>
+    const req = input instanceof Request ? input : new Request(String(input), init)
+    const body = (await readBodyJson(req)) as Record<string, unknown>
+    captured = {
+      url: req.url,
+      authHeader: req.headers.get('authorization'),
+      body,
+    }
 
     const encoder = new TextEncoder()
     const stream = new ReadableStream<Uint8Array>({
@@ -75,40 +81,41 @@ async function drainTextStream(res: Response): Promise<void> {
   }
 }
 
-describe('POST /api/chat — prefix caching wire contract', () => {
+describe('POST /api/chat — xAI wire contract', () => {
   beforeEach(() => {
-    capturedBody = null
-    process.env.OPENROUTER_API_KEY = 'test-key'
+    captured = null
+    process.env.XAI_API_KEY = 'test-key'
     vi.resetModules()
   })
 
   afterEach(() => {
     vi.resetModules()
-    delete process.env.OPENROUTER_API_KEY
+    delete process.env.XAI_API_KEY
   })
 
   /**
    * @example
    *   client POST { systemPrompt: 'You are Mika…', messages: [user] }
-   *   wire body: messages[0] = {
-   *     role: 'system',
-   *     content: [{ type: 'text', text: 'You are Mika…',
-   *                 cache_control: { type: 'ephemeral' } }]
-   *   }
+   *   wire POST https://eu-west-1.api.x.ai/v1/chat/completions
+   *     body.model    === 'grok-4-1-fast-non-reasoning'
+   *     body.messages === [{role:'system', content:'You are Mika…'},
+   *                        {role:'user',   content:'Hi there'}]
    */
-  it('attaches cache_control:ephemeral to the system message content part', async () => {
-    const { createOpenRouter } = await import('@openrouter/ai-sdk-provider')
-    const fakeFetch = installFakeOpenRouterFetch(
-      'data: [DONE]\n\n',
-    )
-    const provider = createOpenRouter({ apiKey: 'test-key', fetch: fakeFetch })
+  it('posts to the xAI regional endpoint with the xAI model id and bearer auth', async () => {
+    const { createXai } = await import('@ai-sdk/xai')
+    const fakeFetch = installFakeXaiFetch('data: [DONE]\n\n')
+    const provider = createXai({
+      apiKey: 'test-key',
+      baseURL: 'https://eu-west-1.api.x.ai/v1',
+      fetch: fakeFetch,
+    })
 
-    // Inject the stubbed provider into the route module. We re-import the
-    // route fresh and monkey-patch `chatModel()` on the server/lib/llm
+    // Inject the stubbed provider into the route module. We re-import
+    // the route fresh and monkey-patch `chatModel()` on the server/lib/llm
     // module — simpler than factoring a DI seam for a single test.
     vi.doMock('../../lib/llm', () => ({
-      CHAT_MODEL_ID: 'x-ai/grok-4.1-fast',
-      chatModel: () => provider('x-ai/grok-4.1-fast'),
+      CHAT_MODEL_ID: 'grok-4-1-fast-non-reasoning',
+      chatModel: () => provider('grok-4-1-fast-non-reasoning'),
     }))
 
     const { chat } = await import('../chat')
@@ -125,44 +132,35 @@ describe('POST /api/chat — prefix caching wire contract', () => {
     expect(res.status).toBe(200)
     await drainTextStream(res)
 
-    expect(capturedBody).not.toBeNull()
-    const body = capturedBody as {
-      messages: Array<{
-        role: string
-        content: unknown
-      }>
-    }
-    expect(body.messages.length).toBe(2)
+    expect(captured).not.toBeNull()
+    const { url, authHeader, body } = captured!
+    expect(url).toMatch(/^https:\/\/eu-west-1\.api\.x\.ai\/v1\/chat\/completions\b/)
+    expect(authHeader).toBe('Bearer test-key')
+    expect(body.model).toBe('grok-4-1-fast-non-reasoning')
 
-    const system = body.messages[0]
-    expect(system.role).toBe('system')
-    // The provider wraps system content in an array of text parts so it
-    // can attach `cache_control` to the final part.
-    expect(Array.isArray(system.content)).toBe(true)
-    const parts = system.content as Array<{
-      type: string
-      text: string
-      cache_control?: { type: string }
-    }>
-    expect(parts.length).toBe(1)
-    expect(parts[0].type).toBe('text')
-    expect(parts[0].text).toBe('You are Mika. You like rock climbing.')
-    expect(parts[0].cache_control).toEqual({ type: 'ephemeral' })
+    const messages = body.messages as Array<{ role: string; content: unknown }>
+    expect(messages.length).toBe(2)
+    expect(messages[0].role).toBe('system')
+    expect(messages[1].role).toBe('user')
   })
 
   /**
    * @example
-   *   user message on the wire:
-   *     { role: 'user', content: 'Hi there' }  (plain string — uncached)
+   *   wire body.messages[0].content === 'sys'  (plain string, no array wrap
+   *   and no cache_control field anywhere)
    */
-  it('does not attach cache_control to user messages', async () => {
-    const { createOpenRouter } = await import('@openrouter/ai-sdk-provider')
-    const fakeFetch = installFakeOpenRouterFetch('data: [DONE]\n\n')
-    const provider = createOpenRouter({ apiKey: 'test-key', fetch: fakeFetch })
+  it('does not attach OpenRouter-style cache_control to any message', async () => {
+    const { createXai } = await import('@ai-sdk/xai')
+    const fakeFetch = installFakeXaiFetch('data: [DONE]\n\n')
+    const provider = createXai({
+      apiKey: 'test-key',
+      baseURL: 'https://eu-west-1.api.x.ai/v1',
+      fetch: fakeFetch,
+    })
 
     vi.doMock('../../lib/llm', () => ({
-      CHAT_MODEL_ID: 'x-ai/grok-4.1-fast',
-      chatModel: () => provider('x-ai/grok-4.1-fast'),
+      CHAT_MODEL_ID: 'grok-4-1-fast-non-reasoning',
+      chatModel: () => provider('grok-4-1-fast-non-reasoning'),
     }))
 
     const { chat } = await import('../chat')
@@ -183,12 +181,11 @@ describe('POST /api/chat — prefix caching wire contract', () => {
     expect(res.status).toBe(200)
     await drainTextStream(res)
 
-    const body = capturedBody as {
+    const body = captured!.body as {
       messages: Array<{ role: string; content: unknown }>
     }
-    const nonSystem = body.messages.filter((m) => m.role !== 'system')
-    for (const m of nonSystem) {
-      // Either string content (uncached) OR an array where no part carries
+    for (const m of body.messages) {
+      // Either string content OR an array whose parts carry no
       // cache_control. Assert both possibilities generically.
       if (typeof m.content === 'string') continue
       if (!Array.isArray(m.content)) continue
@@ -200,17 +197,20 @@ describe('POST /api/chat — prefix caching wire contract', () => {
 
   /**
    * @example
-   *   request with no systemPrompt → wire has no system message and
-   *   certainly no cache_control anywhere.
+   *   request with no systemPrompt → wire has no system message.
    */
   it('omits the system message entirely when no systemPrompt is provided', async () => {
-    const { createOpenRouter } = await import('@openrouter/ai-sdk-provider')
-    const fakeFetch = installFakeOpenRouterFetch('data: [DONE]\n\n')
-    const provider = createOpenRouter({ apiKey: 'test-key', fetch: fakeFetch })
+    const { createXai } = await import('@ai-sdk/xai')
+    const fakeFetch = installFakeXaiFetch('data: [DONE]\n\n')
+    const provider = createXai({
+      apiKey: 'test-key',
+      baseURL: 'https://eu-west-1.api.x.ai/v1',
+      fetch: fakeFetch,
+    })
 
     vi.doMock('../../lib/llm', () => ({
-      CHAT_MODEL_ID: 'x-ai/grok-4.1-fast',
-      chatModel: () => provider('x-ai/grok-4.1-fast'),
+      CHAT_MODEL_ID: 'grok-4-1-fast-non-reasoning',
+      chatModel: () => provider('grok-4-1-fast-non-reasoning'),
     }))
 
     const { chat } = await import('../chat')
@@ -226,7 +226,7 @@ describe('POST /api/chat — prefix caching wire contract', () => {
     expect(res.status).toBe(200)
     await drainTextStream(res)
 
-    const body = capturedBody as {
+    const body = captured!.body as {
       messages: Array<{ role: string; content: unknown }>
     }
     expect(body.messages.find((m) => m.role === 'system')).toBeUndefined()

@@ -2,8 +2,8 @@
  * Builds the system prompt the LLM receives for a companion turn.
  *
  * Block order (top→bottom), chosen so the LEADING portion is identical
- * across turns for a given character — OpenRouter + xAI apply automatic
- * prefix caching at >1024 tokens, so keeping the stable blocks first
+ * across turns for a given character — xAI applies automatic prefix
+ * caching at >1024 tokens, so keeping the stable blocks first
  * maximises cache hits on turns 2+.
  *
  *   1. Persona (stable per character)

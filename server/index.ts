@@ -15,7 +15,7 @@ app.get('/api/health', (c) =>
   c.json({
     status: 'ok',
     time: new Date().toISOString(),
-    hasOpenRouterKey: Boolean(process.env.OPENROUTER_API_KEY),
+    hasXaiKey: Boolean(process.env.XAI_API_KEY),
     hasElevenLabsKey: Boolean(process.env.ELEVENLABS_API_KEY),
   }),
 )

@@ -17,7 +17,7 @@ export const TRACE_CATEGORIES = [
   // LLM
   'llm.request',
   // Network round-trip split — lets us separate our-side fetch setup
-  // from OpenRouter → xAI prefill from our own categorizer overhead.
+  // from xAI prefill from our own categorizer overhead.
   //
   //   llm.request       → call start
   //   llm.fetch-sent    → fetch() promise resolved; waiting on bytes
@@ -131,8 +131,8 @@ export interface LlmFirstTokenData {
  * done and the server has begun streaming headers, but no bytes have
  * arrived yet. The gap (llm.request → llm.fetch-sent) captures:
  *   - our client→server network
- *   - our Hono handler doing its own fetch() to OpenRouter
- *   - OpenRouter's own TCP handshake to xAI
+ *   - our Hono handler doing its own fetch() to xAI
+ *   - xAI's TCP + TLS handshake with us
  * but NOT xAI's prefill or token generation.
  */
 export interface LlmFetchSentData {
@@ -144,8 +144,8 @@ export interface LlmFetchSentData {
 /**
  * `llm.first-byte` — emitted on the first `Uint8Array` off the Response
  * body's ReadableStream. The gap (llm.fetch-sent → llm.first-byte) is
- * almost entirely xAI's prefill cost (plus OpenRouter's relay), which is
- * the piece we're hoping to shrink with prefix caching.
+ * almost entirely xAI's prefill cost, which is the piece we're hoping
+ * to shrink with prefix caching.
  */
 export interface LlmFirstByteData {
   /** ms from turn.start (or call start) to the first decoded chunk. */

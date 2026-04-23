@@ -29,9 +29,9 @@ const memory = new Hono()
  * or tolerate LLM prose.
  */
 memory.post('/extract', async (c) => {
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!process.env.XAI_API_KEY) {
     return c.json(
-      { error: 'OPENROUTER_API_KEY not configured on the server' },
+      { error: 'XAI_API_KEY not configured on the server' },
       503,
     )
   }
@@ -106,9 +106,9 @@ memory.post('/extract', async (c) => {
  * the rewritten content.
  */
 memory.post('/compact', async (c) => {
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!process.env.XAI_API_KEY) {
     return c.json(
-      { error: 'OPENROUTER_API_KEY not configured on the server' },
+      { error: 'XAI_API_KEY not configured on the server' },
       503,
     )
   }

@@ -5,10 +5,10 @@ import { VRM_PRESETS } from '../../vrm/presets'
 /**
  * System-prompt block-order tests — pinned after the Phase 11 TTFT work.
  *
- * The ordering is load-bearing: OpenRouter / xAI apply automatic prefix
- * caching when the leading section of the prompt is identical across
- * requests. Dynamic blocks (`memoryBlock`, `customInstructions`) must
- * stay at the tail or every turn busts the cache.
+ * The ordering is load-bearing: xAI applies automatic prefix caching
+ * when the leading section of the prompt is identical across requests.
+ * Dynamic blocks (`memoryBlock`, `customInstructions`) must stay at
+ * the tail or every turn busts the cache.
  */
 
 const PERSONA = 'You are TestChar.'
@@ -48,7 +48,7 @@ describe('buildSystemPrompt block order', () => {
   })
 
   /**
-   * xAI / OpenRouter automatic prefix caching only kicks in once the
+   * xAI automatic prefix caching only kicks in once the
    * shared prompt prefix is ~1024 tokens or larger. Measured LLM TTFT
    * on turn 2+3 in the prior latency pass was ~4.8s — identical to
    * turn 1 — because the compressed persona-only prefix was ~750 tokens

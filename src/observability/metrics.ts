@@ -9,10 +9,10 @@ import type { TraceEvent } from './types'
 /** Per-turn stage timings computed from tracer events. */
 export interface TurnStages {
   /** ms from `turn.start` to `llm.fetch-sent` — client-side fetch
-   *  promise resolved; TCP + server-to-OpenRouter handshake done. */
+   *  promise resolved; TCP + server-to-xAI handshake done. */
   llmFetchSentMs: number | null
   /** ms from `turn.start` to `llm.first-byte` — first Uint8Array off
-   *  the Response body. Captures xAI prefill + OpenRouter relay. */
+   *  the Response body. Captures xAI prefill. */
   llmFirstByteMs: number | null
   /** ms from `turn.start` to `llm.first-token`. null if no first-token event. */
   llmFirstTokenMs: number | null

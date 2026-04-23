@@ -15,7 +15,7 @@ export interface ChatMessage {
  *
  * Aborts:
  * - `signal.abort()` cancels the fetch, which cancels the server's
- *   streamText(), which cancels the OpenRouter upstream fetch. Nothing
+ *   streamText(), which cancels the xAI upstream fetch. Nothing
  *   continues to synthesize after the user barges in.
  *
  * Throws:
@@ -54,7 +54,7 @@ export async function* streamChat(options: {
     }),
   })
 
-  // fetch() has returned — TCP + server-side fetch-to-OpenRouter handshake
+  // fetch() has returned — TCP + server-side fetch-to-xAI handshake
   // is done. Body bytes haven't been read yet; the next measurement (first
   // chunk off the ReadableStream) isolates xAI prefill from that setup.
   tracer.emit({
@@ -80,8 +80,8 @@ export async function* streamChat(options: {
       if (!firstByteSeen) {
         firstByteSeen = true
         // First Uint8Array arrived. The gap from fetch-sent → first-byte
-        // is dominated by xAI prefill (+ OpenRouter relay). Useful when
-        // reasoning about whether prefix caching is actually hitting.
+        // is dominated by xAI prefill. Useful when reasoning about
+        // whether prefix caching is actually hitting.
         tracer.emit({
           category: 'llm.first-byte',
           data: { elapsedMs: Date.now() - t0 },
