@@ -5,7 +5,6 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react'
-import { ensureLipSyncDriver } from '../vrm/lip-sync-driver'
 import {
   createTurnController,
   type TurnController,
@@ -13,23 +12,35 @@ import {
   type UITurn,
 } from '../pipelines/turn-controller'
 import { useCharacterStore } from '../stores/character'
+import { useSceneStore } from '../stores/scene'
 import { getPreset } from '../vrm/presets'
-
-type AudioStatus = 'idle' | 'initializing' | 'ready' | 'error'
+import { pushToast } from '../stores/toasts'
+import { useGlobalShortcuts } from '../hooks/useGlobalShortcuts'
 
 /**
- * Phase 5 chat panel.
+ * Phase 5 chat panel — Phase 10 cold-start polish.
  *
- * One combined UI:
- *  - "Click to enable audio" gate (unlocks AudioContext + wlipsync worklet).
+ * StartGate owns the audio-context gesture now, so this panel assumes
+ * audio is ready by the time it renders its interactive surface. The
+ * panel's DOM is still mounted during StartGate's display (so the turn
+ * controller subscriptions live) but the panel is visually gated on
+ * `sceneStatus === 'ready'`.
+ *
+ * Features:
  *  - Mic toggle (VAD mode) — hands-free turn-taking + barge-in.
  *  - Scrollable message list mirroring the controller's history.
  *  - Input box; Enter sends, Shift+Enter adds a newline.
  *  - Stop button aborts current turn and commits `[interrupted]` to history.
  */
+const FIRST_RUN_FLAG = 'ai-companion-seen-first-run'
+const PLACEHOLDER_SUGGESTION = "Try: 'Tell me about yourself'"
+
 export function ChatPanel() {
-  const [status, setStatus] = useState<AudioStatus>('idle')
-  const [audioError, setAudioError] = useState<string | null>(null)
+  const sceneStatus = useSceneStore((s) => s.status)
+  // The gate keeps the panel visually muted before first start so the
+  // user knows where to click. `ready` means the gate's audio init
+  // finished — dismissed by the StartGate component itself.
+  const audioReady = sceneStatus === 'ready'
 
   const activePresetId = useCharacterStore((s) => s.activePresetId)
 
@@ -62,7 +73,6 @@ export function ChatPanel() {
   const [micOn, setMicOn] = useState(false)
   const [micPending, setMicPending] = useState(false)
   const [input, setInput] = useState('')
-  const [turnError, setTurnError] = useState<string | null>(null)
 
   const listRef = useRef<HTMLDivElement | null>(null)
 
@@ -80,7 +90,10 @@ export function ChatPanel() {
           setLiveAssistant(controller.getLiveAssistant())
           break
         case 'error':
-          setTurnError(ev.message)
+          // Phase 10 — surface pipeline errors through the toast stack.
+          // The in-panel inline error (below the message that failed)
+          // is gone; toasts are the primary surface now.
+          pushToast({ kind: 'error', message: ev.message })
           break
       }
     })
@@ -107,20 +120,8 @@ export function ChatPanel() {
     controller.clearHistory()
   }, [activePresetId, controller])
 
-  async function handleEnableAudio() {
-    setStatus('initializing')
-    setAudioError(null)
-    try {
-      await ensureLipSyncDriver()
-      setStatus('ready')
-    } catch (e) {
-      setStatus('error')
-      setAudioError(e instanceof Error ? e.message : String(e))
-    }
-  }
-
   async function handleToggleMic() {
-    setTurnError(null)
+    if (!audioReady) return
     setMicPending(true)
     try {
       if (micOn) {
@@ -131,7 +132,10 @@ export function ChatPanel() {
         setMicOn(true)
       }
     } catch (e) {
-      setTurnError(e instanceof Error ? e.message : String(e))
+      pushToast({
+        kind: 'error',
+        message: e instanceof Error ? e.message : String(e),
+      })
     } finally {
       setMicPending(false)
     }
@@ -139,8 +143,7 @@ export function ChatPanel() {
 
   function handleSend() {
     const trimmed = input.trim()
-    if (!trimmed) return
-    setTurnError(null)
+    if (!trimmed || !audioReady) return
     setInput('')
     controller.sendText(trimmed)
   }
@@ -152,7 +155,6 @@ export function ChatPanel() {
   function handleClear() {
     if (turnState === 'speaking' || turnState === 'thinking') return
     controller.clearHistory()
-    setTurnError(null)
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -162,11 +164,44 @@ export function ChatPanel() {
     }
   }
 
+  // Phase 10 global shortcuts:
+  //   - M: toggle mic (only when idle — we don't want to kill a live turn)
+  //   - Cmd/Ctrl+K: clear chat history
+  //   - Esc: stop the assistant mid-speech (only when it's actually speaking)
+  useGlobalShortcuts({
+    m: () => {
+      if (!audioReady) return
+      if (micPending) return
+      void handleToggleMic()
+    },
+    'mod+k': (e) => {
+      // preventDefault so Cmd+K doesn't open the browser's address-bar
+      // search on browsers that bind it there.
+      e.preventDefault()
+      handleClear()
+    },
+    escape: () => {
+      if (turnState === 'speaking' || turnState === 'thinking') {
+        handleStop()
+      }
+    },
+  })
+
   const busy = turnState === 'thinking' || turnState === 'speaking'
-  const canEdit = status === 'ready'
+
+  // Show a prompt-starter placeholder exactly once per browser so repeat
+  // users aren't nudged forever. The flag is checked lazily at render time
+  // rather than put in state; any write to localStorage is guarded below.
+  const firstRun = useFirstRun()
 
   return (
-    <div className="pointer-events-auto absolute bottom-4 right-4 flex h-[30rem] w-96 flex-col gap-2 rounded-lg bg-black/60 p-3 text-sm backdrop-blur-sm">
+    <div
+      className={[
+        'pointer-events-auto absolute bottom-4 right-4 flex h-[30rem] w-96 flex-col gap-2 rounded-lg bg-black/60 p-3 text-sm backdrop-blur-sm',
+        audioReady ? '' : 'pointer-events-none opacity-60',
+      ].join(' ')}
+      aria-hidden={!audioReady}
+    >
       <div className="flex items-center gap-2">
         <div className="font-semibold opacity-80">Voice chat</div>
         <StateChip state={turnState} micOn={micOn} />
@@ -174,104 +209,117 @@ export function ChatPanel() {
           onClick={handleClear}
           disabled={busy || history.length === 0}
           className="ml-auto rounded bg-zinc-800 px-2 py-0.5 text-[10px] uppercase tracking-wider hover:bg-zinc-700 disabled:opacity-30"
+          title="Clear history (Cmd/Ctrl+K)"
         >
           Clear
         </button>
-        {status === 'ready' && (
-          <button
-            onClick={handleToggleMic}
-            disabled={micPending}
-            className={[
-              'rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-white',
-              micOn
-                ? 'bg-rose-600 hover:bg-rose-500'
-                : 'bg-cyan-700 hover:bg-cyan-600',
-              'disabled:cursor-not-allowed disabled:opacity-40',
-            ].join(' ')}
-            title={micOn ? 'Stop listening' : 'Start listening'}
-          >
-            {micPending ? '…' : micOn ? '● Mic' : '○ Mic'}
-          </button>
+        <button
+          onClick={handleToggleMic}
+          disabled={micPending || !audioReady}
+          className={[
+            'rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-white',
+            micOn
+              ? 'bg-rose-600 hover:bg-rose-500'
+              : 'bg-cyan-700 hover:bg-cyan-600',
+            'disabled:cursor-not-allowed disabled:opacity-40',
+          ].join(' ')}
+          title={micOn ? 'Stop listening (M)' : 'Start listening (M)'}
+        >
+          {micPending ? '…' : micOn ? '● Mic' : '○ Mic'}
+        </button>
+      </div>
+
+      <div
+        ref={listRef}
+        className="flex-1 space-y-2 overflow-y-auto rounded bg-zinc-950/60 p-2 text-xs"
+      >
+        {history.length === 0 && !liveAssistant && turnState === 'idle' && (
+          <div className="opacity-50">
+            {micOn
+              ? 'Mic is on — just start talking.'
+              : 'Turn on the mic or type to start.'}
+          </div>
+        )}
+        {history.map((t, i) => (
+          <Turn key={i} turn={t} />
+        ))}
+        {(turnState === 'listening' || turnState === 'transcribing') && (
+          <EphemeralTurn kind="user" state={turnState} />
+        )}
+        {liveAssistant && (
+          <Turn turn={{ role: 'assistant', content: liveAssistant }} live />
         )}
       </div>
 
-      {status === 'idle' && (
+      <textarea
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        rows={2}
+        placeholder={
+          micOn
+            ? 'Or type a message… (Enter to send)'
+            : firstRun
+              ? PLACEHOLDER_SUGGESTION
+              : 'Type a message… (Enter to send)'
+        }
+        disabled={!audioReady}
+        className="resize-none rounded bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-cyan-500 disabled:opacity-50"
+      />
+
+      <div className="flex gap-2">
         <button
-          onClick={handleEnableAudio}
-          className="rounded bg-cyan-600 px-3 py-2 font-medium text-white hover:bg-cyan-500"
+          onClick={handleSend}
+          disabled={!audioReady || !input.trim()}
+          className="flex-1 rounded bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:opacity-40"
         >
-          Click to enable audio
+          Send
         </button>
-      )}
-      {status === 'initializing' && <div className="opacity-70">Initializing…</div>}
-      {status === 'error' && (
-        <div className="break-words text-rose-400">Audio init failed: {audioError}</div>
-      )}
-
-      {status === 'ready' && (
-        <>
-          <div
-            ref={listRef}
-            className="flex-1 space-y-2 overflow-y-auto rounded bg-zinc-950/60 p-2 text-xs"
-          >
-            {history.length === 0 && !liveAssistant && turnState === 'idle' && (
-              <div className="opacity-50">
-                {micOn
-                  ? 'Mic is on — just start talking.'
-                  : 'Turn on the mic or type to start.'}
-              </div>
-            )}
-            {history.map((t, i) => (
-              <Turn key={i} turn={t} />
-            ))}
-            {(turnState === 'listening' || turnState === 'transcribing') && (
-              <EphemeralTurn kind="user" state={turnState} />
-            )}
-            {liveAssistant && (
-              <Turn turn={{ role: 'assistant', content: liveAssistant }} live />
-            )}
-          </div>
-
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={2}
-            placeholder={
-              micOn
-                ? 'Or type a message… (Enter to send)'
-                : 'Type a message… (Enter to send)'
-            }
-            disabled={!canEdit}
-            className="resize-none rounded bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-cyan-500 disabled:opacity-50"
-          />
-
-          <div className="flex gap-2">
-            <button
-              onClick={handleSend}
-              disabled={!canEdit || !input.trim()}
-              className="flex-1 rounded bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:opacity-40"
-            >
-              Send
-            </button>
-            <button
-              onClick={handleStop}
-              disabled={!busy}
-              className="rounded bg-rose-600 px-3 py-1.5 font-medium text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:opacity-40"
-            >
-              ■ Stop
-            </button>
-          </div>
-
-          {turnError && (
-            <div className="max-w-full break-words text-xs text-rose-400">
-              {turnError}
-            </div>
-          )}
-        </>
-      )}
+        <button
+          onClick={handleStop}
+          disabled={!busy}
+          className="rounded bg-rose-600 px-3 py-1.5 font-medium text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:opacity-40"
+          title="Stop (Esc)"
+        >
+          ■ Stop
+        </button>
+      </div>
     </div>
   )
+}
+
+/**
+ * Returns true exactly once per browser session — we use it to hint a
+ * prompt starter in the input placeholder on first visit. After the user
+ * sends their first turn we flip the flag in localStorage so the hint
+ * doesn't stick around.
+ *
+ * Swallows localStorage errors (private mode, quota) and treats them as
+ * "not first run" — better to hide the hint than to crash.
+ */
+function useFirstRun(): boolean {
+  // We're cheap about reactivity here — the hint is rendered once and we
+  // don't need to track re-flips. Reading at module/effect scope would
+  // work too; inline useState keeps React semantics clean.
+  const [firstRun] = useState<boolean>(() => {
+    try {
+      return typeof window !== 'undefined' &&
+        window.localStorage.getItem(FIRST_RUN_FLAG) === null
+    } catch {
+      return false
+    }
+  })
+  // Flag the user as "seen" on mount (not on send) so a user who only
+  // browses doesn't get the hint next time either. Simplest behaviour.
+  useEffect(() => {
+    if (!firstRun) return
+    try {
+      window.localStorage.setItem(FIRST_RUN_FLAG, '1')
+    } catch {
+      /* ignore */
+    }
+  }, [firstRun])
+  return firstRun
 }
 
 function StateChip({ state, micOn }: { state: TurnState; micOn: boolean }) {

@@ -13,12 +13,30 @@ import { DEFAULT_PRESET_ID } from '../vrm/presets'
  *
  * The map is keyed by preset id so switching between characters doesn't
  * clobber each other's overrides.
+ *
+ * Phase 10 audit:
+ *   Zustand `persist` middleware hydrates SYNCHRONOUSLY from localStorage
+ *   on store creation (no async callback — it's plain `localStorage.getItem`
+ *   during the `create()` call). The first React render therefore already
+ *   sees the restored `activePresetId`, and there is no Mika-then-Ani flash
+ *   on reload.
+ *
+ *   We still expose `hasHydrated` so the StartGate can distinguish "boot in
+ *   progress" from "ready to pick a character" in the same render cycle. The
+ *   flag flips to true once `onRehydrateStorage` finishes, which happens
+ *   before the first render anyway — but having the flag makes the intent
+ *   explicit and keeps us safe if Zustand ever flips the default to async.
  */
 interface CharacterState {
   activePresetId: string
   customInstructions: Record<string, string>
+  /** True once persist middleware has finished loading from localStorage.
+   *  Consumers (StartGate) can treat this as the gate for "know which
+   *  character to render". */
+  hasHydrated: boolean
   setActivePresetId: (id: string) => void
   setCustomInstructions: (presetId: string, text: string) => void
+  setHasHydrated: (v: boolean) => void
 }
 
 export const useCharacterStore = create<CharacterState>()(
@@ -26,14 +44,36 @@ export const useCharacterStore = create<CharacterState>()(
     (set) => ({
       activePresetId: DEFAULT_PRESET_ID,
       customInstructions: {},
+      // Zustand's persist middleware sets this synchronously below during
+      // onRehydrateStorage's finish callback. Start true-adjacent-to-load
+      // so the UI doesn't block on an empty cache.
+      hasHydrated: false,
       setActivePresetId: (id) => set({ activePresetId: id }),
       setCustomInstructions: (presetId, text) =>
         set((state) => ({
           customInstructions: { ...state.customInstructions, [presetId]: text },
         })),
+      setHasHydrated: (v) => set({ hasHydrated: v }),
     }),
-    // v1 key — bump the suffix if the shape changes (bigger than one key
-    // in a map, or we rename `activePresetId`, etc.).
-    { name: 'ai-companion-character-v1' },
+    {
+      // v1 key — bump the suffix if the shape changes (bigger than one key
+      // in a map, or we rename `activePresetId`, etc.).
+      name: 'ai-companion-character-v1',
+      // Exclude the hydration flag from the serialized state so it always
+      // starts false and flips true after restoration. Everything else
+      // round-trips by default.
+      partialize: (state) => ({
+        activePresetId: state.activePresetId,
+        customInstructions: state.customInstructions,
+      }),
+      onRehydrateStorage: () => (state, error) => {
+        // If rehydrate errored (quota exceeded, private mode, …), we
+        // still want to proceed with defaults rather than hang the UI.
+        if (error) {
+          console.warn('[character-store] rehydrate failed', error)
+        }
+        state?.setHasHydrated(true)
+      },
+    },
   ),
 )

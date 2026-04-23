@@ -5,6 +5,7 @@ import {
   VRMAnimationLoaderPlugin,
   type VRMAnimation,
 } from '@pixiv/three-vrm-animation'
+import { reportVrmProgress } from './useVRMLoader'
 
 /**
  * Suspense-friendly loader for `.vrma` animation files.
@@ -14,9 +15,12 @@ import {
  * contain exactly one.
  */
 export function useVRMAnimationLoader(url: string): VRMAnimation {
-  const gltf = useLoader(GLTFLoader, url, registerPlugins) as {
-    userData: { vrmAnimations?: VRMAnimation[] }
-  }
+  const gltf = useLoader(
+    GLTFLoader,
+    url,
+    registerPlugins,
+    reportVrmProgress,
+  ) as { userData: { vrmAnimations?: VRMAnimation[] } }
   const animation = gltf.userData.vrmAnimations?.[0]
   if (!animation)
     throw new Error(`[useVRMAnimationLoader] No VRMAnimation found in ${url}`)
@@ -37,9 +41,12 @@ export function useVRMAnimationLoader(url: string): VRMAnimation {
  *   preset registry is module-level.
  */
 export function useVRMAnimationsLoader(urls: readonly string[]): VRMAnimation[] {
-  const gltfs = useLoader(GLTFLoader, urls as string[], registerPlugins) as Array<{
-    userData: { vrmAnimations?: VRMAnimation[] }
-  }>
+  const gltfs = useLoader(
+    GLTFLoader,
+    urls as string[],
+    registerPlugins,
+    reportVrmProgress,
+  ) as Array<{ userData: { vrmAnimations?: VRMAnimation[] } }>
   return gltfs.map((gltf, i) => {
     const anim = gltf.userData.vrmAnimations?.[0]
     if (!anim)

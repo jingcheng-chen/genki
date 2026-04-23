@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { VRMUtils, type VRM } from '@pixiv/three-vrm'
+import { useSceneStore } from '../stores/scene'
 
 // NOTICE:
 // `VRMUtils.removeUnnecessaryVertices` and `VRMUtils.combineSkeletons`
@@ -115,9 +116,27 @@ export function VRMCharacter({ presetId }: Props) {
   useEffect(() => {
     const v = vrmRef.current
     if (!v) return
+    // Phase 10 — announce the VRM side of the boot handshake. The hooks
+    // above have already resolved (otherwise we wouldn't be running this
+    // effect), so fetch progress is at 100% and we're in the synchronous
+    // wire-up phase. `binding` -> `ready` is expected to happen within
+    // one frame for all practical models. We only fire this on the first
+    // load of the session; subsequent character swaps keep us in `ready`
+    // since the StartGate is already dismissed.
+    const sceneStore = useSceneStore.getState()
+    if (sceneStore.status !== 'ready') {
+      sceneStore.setVrmProgress(1)
+      sceneStore.setStatus('binding')
+    }
     const controller = createAnimationController(v, preset.animations, animations)
     animRef.current = controller
     setActiveAnimationController(controller)
+    // Animation controller allocated, first expression apply will happen
+    // on the first useFrame tick. Mark ready now so the StartGate can
+    // enable its Start button; the render loop picks up from here.
+    if (useSceneStore.getState().status !== 'ready') {
+      useSceneStore.getState().setStatus('ready')
+    }
 
     return () => {
       setActiveAnimationController(null)
