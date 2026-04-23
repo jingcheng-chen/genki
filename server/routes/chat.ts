@@ -1,18 +1,18 @@
 import { Hono } from 'hono'
-import { streamText, type CoreMessage } from 'ai'
+import { streamText, type ModelMessage } from 'ai'
 import { chatModel } from '../lib/llm'
 
 const chat = new Hono()
 
 interface ChatRequestBody {
-  messages?: CoreMessage[]
+  messages?: ModelMessage[]
   systemPrompt?: string
 }
 
 /**
  * POST /api/chat
  *
- * Body: { messages: CoreMessage[], systemPrompt?: string }
+ * Body: { messages: ModelMessage[], systemPrompt?: string }
  * Returns: text/event-stream containing plain text deltas (Vercel AI SDK
  *          text-stream protocol)
  *
@@ -44,7 +44,7 @@ chat.post('/', async (c) => {
   }
 
   try {
-    const messages: CoreMessage[] = body.systemPrompt
+    const messages: ModelMessage[] = body.systemPrompt
       ? [{ role: 'system', content: body.systemPrompt }, ...body.messages]
       : body.messages
 

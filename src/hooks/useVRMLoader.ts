@@ -22,6 +22,16 @@ import { useSceneStore } from '../stores/scene'
  * @returns the parsed GLTF; `.userData.vrm` is the VRM instance.
  */
 export function useVRMLoader(url: string): GLTF & { userData: { vrm: VRM } } {
+  // NOTICE:
+  // In @react-three/fiber v9, useLoader's return type changed to
+  // `GLTF & ObjectMap` which no longer overlaps with our narrower
+  // `{ userData: { vrm: VRM } }` claim (ObjectMap types userData as
+  // Record<string, any>). The runtime shape is unchanged — the VRM
+  // plugin still stashes the VRM instance on userData.vrm — so we
+  // widen through `unknown` to preserve the caller-facing contract.
+  // Root cause: @react-three/fiber 9.x ObjectMap userData typing.
+  // Source: node_modules/@react-three/fiber/dist/declarations/src/core/utils.d.ts
+  // Removal: when fiber exposes a way to augment GLTF's userData type.
   return useLoader(
     GLTFLoader,
     url,
@@ -30,7 +40,7 @@ export function useVRMLoader(url: string): GLTF & { userData: { vrm: VRM } } {
       loader.register((parser) => new VRMAnimationLoaderPlugin(parser))
     },
     (ev) => reportVrmProgress(ev),
-  ) as GLTF & { userData: { vrm: VRM } }
+  ) as unknown as GLTF & { userData: { vrm: VRM } }
 }
 
 /**
