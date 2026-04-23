@@ -34,6 +34,7 @@ import {
   type NewFactInput,
 } from './repo'
 import type { Category, MemoryFact } from '../types/memory'
+import { tracer } from '../observability/tracer'
 
 /** Importance threshold. Anything strictly below this is noise. */
 export const IMPORTANCE_FLOOR = 0.3
@@ -165,6 +166,15 @@ async function runExtraction(job: ExtractorJob): Promise<void> {
     .filter((f) => job.retrievedFactIds.includes(f.id))
     .map((f) => ({ id: f.id, content: f.content, category: f.category }))
 
+  tracer.emit({
+    category: 'memory.extract-req',
+    data: {
+      characterId: job.characterId,
+      userTurnLen: job.userTurn.length,
+      assistantTurnLen: job.assistantTurn.length,
+    },
+  })
+
   let lastErr: unknown = null
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -172,6 +182,14 @@ async function runExtraction(job: ExtractorJob): Promise<void> {
         userTurn: job.userTurn,
         assistantTurn: job.assistantTurn,
         retrievedFacts: retrievedPayload,
+      })
+      tracer.emit({
+        category: 'memory.extract-res',
+        data: {
+          new: (result.new_facts ?? []).length,
+          reinforced: (result.reinforced_fact_ids ?? []).length,
+          outdated: (result.outdated_fact_ids ?? []).length,
+        },
       })
       await applyExtractorResult(job.characterId, existing, result)
       return
@@ -183,6 +201,13 @@ async function runExtraction(job: ExtractorJob): Promise<void> {
       }
     }
   }
+  tracer.emit({
+    category: 'memory.error',
+    data: {
+      message: lastErr instanceof Error ? lastErr.message : String(lastErr),
+      stage: 'extract',
+    },
+  })
   throw lastErr ?? new Error('extractor failed without an error')
 }
 

@@ -5,6 +5,7 @@ import { createMarkerParser, parseMarker } from './marker-parser'
 import { createStreamingSpeaker } from './speech-pipeline'
 import { getExpressionController } from '../vrm/expression-controller'
 import { getActiveAnimationController } from '../vrm/animation-controller'
+import { tracer } from '../observability/tracer'
 
 export interface TurnHandle {
   /** Resolves when LLM + TTS + playback all complete. */
@@ -32,6 +33,12 @@ export interface RunTurnOptions {
   /** ElevenLabs voice id for this turn's TTS. Defaults to the server's
    *  fallback voice (Rachel) if omitted. */
   voiceId?: string
+  /** Opaque id the controller assigned this turn. Threaded through every
+   *  tracer event so the Turns tab can group them. */
+  turnId?: string
+  /** Wall-clock ms when the turn started (Date.now from turn-controller).
+   *  Used to compute `llm.first-token` / `turn.first-audio` offsets. */
+  turnStartTs?: number
   /** Called with each assistant text delta AFTER reasoning tags are stripped
    *  and marker tokens are removed. Intended for UI transcript rendering. */
   onAssistantText?: (delta: string) => void
@@ -61,8 +68,14 @@ export interface RunTurnOptions {
  */
 export function runTurn(options: RunTurnOptions): TurnHandle {
   const ac = new AbortController()
+  const turnId = options.turnId ?? null
+  const turnStartTs = options.turnStartTs ?? Date.now()
 
-  const speaker = createStreamingSpeaker({ voiceId: options.voiceId })
+  const speaker = createStreamingSpeaker({
+    voiceId: options.voiceId,
+    turnId,
+    turnStartTs,
+  })
   const expression = getExpressionController()
   const animation = getActiveAnimationController()
 
@@ -71,10 +84,12 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
   // memory curator should reason over — marker tokens would pollute
   // the extraction.
   let assistantAccum = ''
+  let firstTokenSeen = false
 
   // Chain the parsers: LLM → categorizer → marker parser → outputs
   const marker = createMarkerParser({
     onLiteral: (text) => {
+      tracer.emit({ category: 'marker.literal', data: { text }, turnId })
       // Strip a bare marker that a model sometimes emits as `[ACT:happy]`
       // by accident — it's not valid JSON, don't read it aloud.
       speaker.consume(text)
@@ -83,6 +98,11 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
     },
     onSpecial: async (raw) => {
       const parsed = parseMarker(raw)
+      tracer.emit({
+        category: 'marker.special',
+        data: { raw, parsed },
+        turnId,
+      })
       if (!parsed) return
       if (parsed.type === 'act') {
         // Face: ADSR envelope for the expression preset
@@ -90,7 +110,12 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
         // Body: if the preset has a clip bound to this emotion, it plays in
         // parallel. triggerEmotion returns false for unbound emotions — we
         // just rely on the facial expression in that case.
-        animation?.triggerEmotion(parsed.emotion)
+        const bound = animation?.triggerEmotion(parsed.emotion) ?? false
+        tracer.emit({
+          category: 'anim.emotion',
+          data: { emotion: parsed.emotion, intensity: parsed.intensity, bound },
+          turnId,
+        })
         options.onEmotion?.(parsed.emotion, parsed.intensity)
       } else if (parsed.type === 'delay') {
         // Pause the speaker by feeding a soft flush + waiting. For Phase 4
@@ -101,15 +126,28 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
         // Gesture whitelist lives in the animation controller; unknown ids
         // return false and are dropped without crashing.
         const started = animation?.play(parsed.id) ?? false
+        tracer.emit({
+          category: 'anim.gesture',
+          data: { id: parsed.id, started },
+          turnId,
+        })
         if (started) options.onGesture?.(parsed.id)
       }
     },
   })
 
   const categorizer = createResponseCategorizer({
-    onSpeech: (text) => marker.consume(text),
-    // onReasoning omitted — drop silently. Non-reasoning Grok shouldn't
-    // emit any, but defence-in-depth.
+    onSpeech: (text) => {
+      tracer.emit({ category: 'categorizer.speech', data: { text }, turnId })
+      return marker.consume(text)
+    },
+    onReasoning: (text, tagName) => {
+      tracer.emit({
+        category: 'categorizer.reason',
+        data: { text, tagName },
+        turnId,
+      })
+    },
   })
 
   const promise = (async () => {
@@ -121,14 +159,36 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
         gestures: animation?.getGestureIds() ?? [],
         boundEmotions: animation?.getBoundEmotions() ?? [],
       })
+      tracer.emit({
+        category: 'llm.request',
+        data: {
+          systemPromptLen: systemPrompt.length,
+          messages: options.messages.map((m) => ({
+            role: m.role,
+            contentLen: m.content.length,
+          })),
+          voiceId: options.voiceId,
+        },
+        turnId,
+      })
       const stream = streamChat({
         messages: options.messages,
         systemPrompt,
         signal: ac.signal,
       })
 
+      const streamStartTs = Date.now()
       for await (const delta of stream) {
         if (ac.signal.aborted) break
+        if (!firstTokenSeen) {
+          firstTokenSeen = true
+          tracer.emit({
+            category: 'llm.first-token',
+            data: { ms: Date.now() - turnStartTs },
+            turnId,
+          })
+        }
+        tracer.emit({ category: 'llm.raw-delta', data: { delta }, turnId })
         await categorizer.consume(delta)
       }
 
@@ -141,6 +201,16 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
 
       await categorizer.flush()
       await marker.flush()
+      tracer.emit({
+        category: 'llm.stream-end',
+        data: {
+          assistantText: assistantAccum,
+          // Rough estimate: 4 chars per token is the mean across English.
+          estimatedTokens: Math.round(assistantAccum.length / 4),
+          durationMs: Date.now() - streamStartTs,
+        },
+        turnId,
+      })
       options.onStreamEnd?.()
 
       // Fire the extractor hook BEFORE awaiting final playback. The user
@@ -163,6 +233,14 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
       // other failure so the caller can surface it.
       if ((err as { name?: string })?.name === 'AbortError') return
       if (ac.signal.aborted) return
+      tracer.emit({
+        category: 'llm.error',
+        data: {
+          message: err instanceof Error ? err.message : String(err),
+          stage: 'stream',
+        },
+        turnId,
+      })
       throw err
     } finally {
       // Safety: ensure in-flight TTS + playback are released even on error.

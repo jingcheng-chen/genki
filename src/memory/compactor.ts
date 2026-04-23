@@ -33,6 +33,7 @@ import {
 import { retentionScore } from './decay'
 import type { MemoryFact } from '../types/memory'
 import { COMPRESSION_TARGET_WORDS, MAX_COMPRESSION_LEVEL } from '../types/memory'
+import { tracer } from '../observability/tracer'
 
 /**
  * Turns since the last pass that will trigger an idle-time pass. The
@@ -159,18 +160,27 @@ export async function runCompaction(characterId: string): Promise<void> {
         f.compressionLevel + 1,
       ) as 0 | 1 | 2 | 3
       const targetWords = COMPRESSION_TARGET_WORDS[nextLevel]
+      tracer.emit({
+        category: 'memory.compact-req',
+        data: { characterId, factId: f.id, targetWords },
+      })
       try {
         const compact = await callCompactorEndpoint(f.content, targetWords)
         await updateFact(characterId, f.id, {
           content: compact,
           compressionLevel: nextLevel,
         })
+        tracer.emit({
+          category: 'memory.compact-res',
+          data: { factId: f.id, fromLen: f.content.length, toLen: compact.length },
+        })
       } catch (err) {
-        console.error(
-          '[memory:compactor] compact failed',
-          f.id,
-          err instanceof Error ? err.message : String(err),
-        )
+        const message = err instanceof Error ? err.message : String(err)
+        console.error('[memory:compactor] compact failed', f.id, message)
+        tracer.emit({
+          category: 'memory.error',
+          data: { message, stage: 'compact' },
+        })
       }
     }
 

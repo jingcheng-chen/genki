@@ -5,6 +5,7 @@ import {
   getLipSyncDriver,
   type LipSyncDriver,
 } from '../vrm/lip-sync-driver'
+import { tracer } from '../observability/tracer'
 
 // ---------------------------------------------------------------------------
 // TTS-safe text sanitizer
@@ -54,6 +55,19 @@ function sanitizeForTTS(text: string): string | null {
   return trimmed
 }
 
+/**
+ * Sanitize wrapper that emits the before/after text to the tracer so the
+ * Turns tab can show a diff between the incoming chunk and the TTS-ready
+ * output. The diff is the smoking gun for "why did my reply sound off?" —
+ * e.g. an unstripped `<span>🎉</span>` ending up dropped entirely.
+ */
+function tracedSanitize(text: string, turnId: string | null): string | null {
+  tracer.emit({ category: 'tts.sanitize-in', data: { text }, turnId })
+  const out = sanitizeForTTS(text)
+  tracer.emit({ category: 'tts.sanitize-out', data: { text: out }, turnId })
+  return out
+}
+
 // ---------------------------------------------------------------------------
 // Shared primitives
 // ---------------------------------------------------------------------------
@@ -73,12 +87,15 @@ function playBuffer(
   buffer: AudioBuffer,
   driver: LipSyncDriver,
   signal: AbortSignal,
+  meta?: { text?: string; turnId?: string | null },
 ): Promise<void> {
   return new Promise<void>((resolve) => {
     if (signal.aborted) return resolve()
 
     const source = createPlaybackSource(buffer, driver)
     let settled = false
+    const text = meta?.text ?? ''
+    const turnId = meta?.turnId ?? null
 
     const cleanup = () => {
       if (settled) return
@@ -90,11 +107,16 @@ function playBuffer(
       source.removeEventListener('ended', onEnd)
     }
 
-    const onEnd = () => { cleanup(); resolve() }
+    const onEnd = () => {
+      tracer.emit({ category: 'tts.playback-end', data: { text }, turnId })
+      cleanup()
+      resolve()
+    }
     const onAbort = () => { cleanup(); resolve() }
 
     source.addEventListener('ended', onEnd)
     signal.addEventListener('abort', onAbort, { once: true })
+    tracer.emit({ category: 'tts.playback-start', data: { text }, turnId })
     source.start()
   })
 }
@@ -116,26 +138,46 @@ export function speak(
   }
 
   const ac = new AbortController()
-  const chunks = chunkText(text, options.chunker)
-    .map(sanitizeForTTS)
+  const rawChunks = chunkText(text, options.chunker)
+  for (const chunk of rawChunks) {
+    tracer.emit({ category: 'ttsch.chunk', data: { text: chunk } })
+  }
+  const chunks = rawChunks
+    .map((c) => tracedSanitize(c, null))
     .filter((c): c is string => c !== null)
 
   // Fire all TTS fetches in parallel — ElevenLabs handles a paragraph's
   // worth of concurrent requests fine. Playback order is preserved by the
   // for-loop below awaiting each promise in sequence.
-  const pending: Array<Promise<AudioBuffer | null>> = chunks.map((c) =>
-    synthesize(c, { voiceId: options.voiceId, signal: ac.signal }).catch((e) => {
-      if (ac.signal.aborted) return null
-      throw e
-    }),
-  )
+  const pending: Array<Promise<AudioBuffer | null>> = chunks.map((c) => {
+    tracer.emit({
+      category: 'tts.request',
+      data: { text: c, voiceId: options.voiceId },
+    })
+    return synthesize(c, { voiceId: options.voiceId, signal: ac.signal })
+      .then((buf) => {
+        tracer.emit({
+          category: 'tts.audio-ready',
+          data: { text: c, durationSec: buf.duration },
+        })
+        return buf
+      })
+      .catch((e) => {
+        if (ac.signal.aborted) return null
+        tracer.emit({
+          category: 'tts.error',
+          data: { message: e instanceof Error ? e.message : String(e) },
+        })
+        throw e
+      })
+  })
 
   const promise = (async () => {
-    for (const p of pending) {
+    for (let i = 0; i < pending.length; i++) {
       if (ac.signal.aborted) break
-      const buf = await p
+      const buf = await pending[i]
       if (!buf || ac.signal.aborted) continue
-      await playBuffer(buf, driver, ac.signal)
+      await playBuffer(buf, driver, ac.signal, { text: chunks[i] })
     }
   })()
 
@@ -163,7 +205,12 @@ export interface StreamingSpeaker {
 }
 
 export function createStreamingSpeaker(
-  options: { voiceId?: string; chunker?: ChunkerOptions } = {},
+  options: {
+    voiceId?: string
+    chunker?: ChunkerOptions
+    turnId?: string | null
+    turnStartTs?: number
+  } = {},
 ): StreamingSpeaker {
   const driver = getLipSyncDriver()
   if (!driver) {
@@ -171,6 +218,8 @@ export function createStreamingSpeaker(
   }
 
   const ac = new AbortController()
+  const turnId = options.turnId ?? null
+  const turnStartTs = options.turnStartTs ?? null
 
   // Chunker settings mirror the sync speak() path so the text→chunk mapping
   // is consistent whether the caller knows the full text or streams it.
@@ -181,8 +230,10 @@ export function createStreamingSpeaker(
   const SENTENCE_TERMINATOR = /[.?!…。！？]\s*$/
 
   const pendingBuffers: Array<Promise<AudioBuffer | null>> = []
+  const chunkTexts: Array<string> = []
   let chunksEmitted = 0
   let buffer = ''
+  let firstAudioSeen = false
 
   // Playback loop runs in the background, draining pendingBuffers as they
   // resolve. We await it in end().
@@ -191,10 +242,23 @@ export function createStreamingSpeaker(
   const drainOne = async () => {
     if (playbackIdx >= pendingBuffers.length) return
     if (ac.signal.aborted) return
-    const p = pendingBuffers[playbackIdx++]
+    const i = playbackIdx++
+    const p = pendingBuffers[i]
+    const text = chunkTexts[i] ?? ''
     const buf = await p
     if (!buf || ac.signal.aborted) return
-    await playBuffer(buf, driver, ac.signal)
+    // Record "first audio" on the first playback — from the user's point
+    // of view, this is when they start hearing something. The `speak`
+    // one-shot path doesn't emit this; it's a turn-level stat.
+    if (!firstAudioSeen && turnStartTs !== null) {
+      firstAudioSeen = true
+      tracer.emit({
+        category: 'turn.first-audio',
+        data: { ms: Date.now() - turnStartTs },
+        turnId,
+      })
+    }
+    await playBuffer(buf, driver, ac.signal, { text, turnId })
   }
 
   function kickPlayback() {
@@ -203,17 +267,43 @@ export function createStreamingSpeaker(
   }
 
   function flushChunk(text: string) {
-    const speakable = sanitizeForTTS(text)
+    // Emit the pre-sanitize text — this IS the TTS chunker's output. The
+    // Turns tab treats `ttsch.chunk` as the pre-sanitizer column.
+    tracer.emit({ category: 'ttsch.chunk', data: { text }, turnId })
+    const speakable = tracedSanitize(text, turnId)
     if (!speakable) return
     chunksEmitted++
+    chunkTexts.push(speakable)
+    tracer.emit({
+      category: 'tts.request',
+      data: { text: speakable, voiceId: options.voiceId },
+      turnId,
+    })
     pendingBuffers.push(
       synthesize(speakable, {
         voiceId: options.voiceId,
         signal: ac.signal,
-      }).catch((e) => {
-        if (ac.signal.aborted) return null
-        throw e
-      }),
+      })
+        .then((buf) => {
+          tracer.emit({
+            category: 'tts.audio-ready',
+            data: { text: speakable, durationSec: buf.duration },
+            turnId,
+          })
+          return buf
+        })
+        .catch((e) => {
+          if (ac.signal.aborted) return null
+          tracer.emit({
+            category: 'tts.error',
+            data: {
+              message: e instanceof Error ? e.message : String(e),
+              text: speakable,
+            },
+            turnId,
+          })
+          throw e
+        }),
     )
     kickPlayback()
   }

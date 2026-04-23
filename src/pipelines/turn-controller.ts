@@ -5,6 +5,7 @@ import type { ChatMessage } from '../adapters/llm'
 import { buildMemoryBlock } from '../memory/retriever'
 import { enqueueExtraction } from '../memory/extractor'
 import { maybeRunCompaction } from '../memory/compactor'
+import { tracer } from '../observability/tracer'
 
 /**
  * Phase 5 orchestrator — owns the mic VAD, the live transcript, the chat
@@ -182,15 +183,23 @@ export function createTurnController(
     if (opts.audio) {
       setState('transcribing')
       try {
-        const { text } = await transcribe(opts.audio, 16000, {
+        // Estimate request byte size: Float32 samples → wav pcm16 is half.
+        tracer.emit({
+          category: 'stt.request',
+          data: { bytes: opts.audio.length * 2, languageCode: options.language },
+        })
+        const { text, languageCode } = await transcribe(opts.audio, 16000, {
           language: options.language,
+        })
+        tracer.emit({
+          category: 'stt.response',
+          data: { text, languageCode },
         })
         userText = text
       } catch (err) {
-        emit({
-          type: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        })
+        const message = err instanceof Error ? err.message : String(err)
+        tracer.emit({ category: 'stt.error', data: { message } })
+        emit({ type: 'error', message })
         setState('idle')
         return
       }
@@ -210,6 +219,14 @@ export function createTurnController(
     setState('thinking')
 
     const preset = options.getPreset()
+    const turnId = makeTurnId()
+    const turnStartTs = Date.now()
+
+    tracer.emit({
+      category: 'turn.start',
+      data: { userText: trimmed, characterId: preset.id },
+      turnId,
+    })
 
     // Assemble the memory block for this turn. A failed load shouldn't
     // take down the conversation — log and proceed with an empty block.
@@ -219,14 +236,28 @@ export function createTurnController(
       const memo = await buildMemoryBlock(preset.id)
       memoryBlock = memo.text
       retrievedFactIds = memo.retrievedFactIds
+      tracer.emit({
+        category: 'memory.retrieve',
+        data: {
+          characterId: preset.id,
+          factCount: retrievedFactIds.length,
+          retrievedIds: retrievedFactIds,
+        },
+        turnId,
+      })
     } catch (err) {
-      console.error(
-        '[turn-controller] memory load failed',
-        err instanceof Error ? err.message : String(err),
-      )
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[turn-controller] memory load failed', message)
+      tracer.emit({
+        category: 'memory.error',
+        data: { message, stage: 'retrieve' },
+        turnId,
+      })
     }
 
     const handle = runTurn({
+      turnId,
+      turnStartTs,
       messages: history.map((t) => ({ role: t.role, content: t.content })),
       persona: preset.persona,
       customInstructions: preset.customInstructions,
@@ -289,7 +320,33 @@ export function createTurnController(
         // trample that here.
         if (state !== 'listening') setState('idle')
       }
+      // Emit `turn.end` outside the happy-path branch so aborted + errored
+      // turns still show up on the Turns tab with a total duration.
+      tracer.emit({
+        category: 'turn.end',
+        data: {
+          totalMs: Date.now() - turnStartTs,
+          stages: {
+            llmFirstTokenMs: null,
+            ttsFirstAudioMs: null,
+            totalMs: Date.now() - turnStartTs,
+          },
+        },
+        turnId,
+      })
     }
+  }
+
+  /**
+   * Generates a per-turn opaque id used to group tracer events. Short
+   * random hex is plenty — the tracer ring buffer caps at 1000 entries,
+   * collisions across sessions are fine.
+   */
+  function makeTurnId(): string {
+    const rand = Math.floor(Math.random() * 0xffff)
+      .toString(16)
+      .padStart(4, '0')
+    return `t_${Date.now().toString(36)}_${rand}`
   }
 
   // -------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import { MicVAD } from '@ricky0123/vad-web'
 import { getAudioContext, resumeAudioContext } from './context'
+import { tracer } from '../observability/tracer'
 
 /**
  * Thin wrapper around @ricky0123/vad-web's `MicVAD`.
@@ -49,9 +50,21 @@ export async function createMicVAD(callbacks: VadCallbacks): Promise<VadHandle> 
     // author. We don't override them — re-tuning VAD is an art project we
     // don't need yet.
     startOnLoad: false,
-    onSpeechStart: () => callbacks.onSpeechStart?.(),
-    onSpeechEnd: (audio) => callbacks.onSpeechEnd?.(audio),
-    onVADMisfire: () => callbacks.onMisfire?.(),
+    onSpeechStart: () => {
+      tracer.emit({ category: 'vad.speech-start', data: {} })
+      callbacks.onSpeechStart?.()
+    },
+    onSpeechEnd: (audio) => {
+      tracer.emit({
+        category: 'vad.speech-end',
+        data: { samples: audio.length },
+      })
+      callbacks.onSpeechEnd?.(audio)
+    },
+    onVADMisfire: () => {
+      tracer.emit({ category: 'vad.misfire', data: {} })
+      callbacks.onMisfire?.()
+    },
   })
 
   return {

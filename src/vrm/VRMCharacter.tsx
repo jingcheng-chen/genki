@@ -28,6 +28,7 @@ import {
 } from './idle-life'
 import { getLipSyncDriver } from './lip-sync-driver'
 import { getExpressionController } from './expression-controller'
+import { createFpsSampler } from '../observability/fps'
 
 interface Props {
   presetId: string
@@ -70,6 +71,7 @@ export function VRMCharacter({ presetId }: Props) {
 
   const blink = useMemo(() => createBlinkController(), [])
   const saccade = useMemo(() => createSaccadeController(), [])
+  const fpsSampler = useMemo(() => createFpsSampler(), [])
   const animRef = useRef<AnimationController | null>(null)
 
   useEffect(() => {
@@ -135,6 +137,10 @@ export function VRMCharacter({ presetId }: Props) {
     getLipSyncDriver()?.update(v, delta)
 
     v.update(delta)
+
+    // Dev-only FPS sample at ~1Hz. No-op in production via the tracer
+    // gate, so this line is free when bundled.
+    fpsSampler(delta)
   })
 
   return <primitive object={vrm.scene} />

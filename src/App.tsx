@@ -2,7 +2,7 @@ import { Suspense } from 'react'
 import { Scene } from './vrm/Scene'
 import { ChatPanel } from './components/ChatPanel'
 import { CharacterPicker } from './components/CharacterPicker'
-import { MemoryInspector } from './components/MemoryInspector'
+import { DebugPanel } from './components/debug/DebugPanel'
 
 export function App() {
   return (
@@ -19,7 +19,9 @@ export function App() {
 
       <CharacterPicker />
       <ChatPanel />
-      {import.meta.env.DEV && <MemoryInspector />}
+      {/* Phase 8 — dev-only. Hidden by default, Shift+D to toggle. Memory
+          inspector is folded into this panel's Memory tab. */}
+      {import.meta.env.DEV && <DebugPanel />}
     </div>
   )
 }
