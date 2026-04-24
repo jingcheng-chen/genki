@@ -17,7 +17,7 @@ import { useSceneStore } from '../stores/scene'
 const PREPARED_VRMS = new WeakSet<VRM>()
 import { useVRMLoader } from '../hooks/useVRMLoader'
 import { useVRMAnimationsLoader } from '../hooks/useVRMAnimationLoader'
-import { getPreset } from './presets'
+import { getModelUrl, getPreset } from './presets'
 import {
   createAnimationController,
   setActiveAnimationController,
@@ -55,7 +55,9 @@ interface Props {
  */
 export function VRMCharacter({ presetId }: Props) {
   const preset = getPreset(presetId)
-  const gltf = useVRMLoader(preset.modelUrl)
+  // Resolve the active outfit variant's url. Today we always load the
+  // default; the helper keeps the site for a future outfit-swap UI.
+  const gltf = useVRMLoader(getModelUrl(preset))
   const vrm = gltf.userData.vrm
   const vrmRef = useRef<VRM>(vrm)
 

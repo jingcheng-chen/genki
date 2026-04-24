@@ -30,14 +30,10 @@
  * actually hit the provider's prefix cache.
  */
 
-const ALLOWED_EMOTIONS = [
-  'happy',
-  'sad',
-  'angry',
-  'surprised',
-  'relaxed',
-  'neutral',
-] as const
+import {
+  ALLOWED_EMOTION_NAMES,
+  emotionHasBodyAnimation,
+} from '../vrm/emotion-vocab'
 
 /**
  * Coarse time-of-day bucket used by the system prompt. Matches the spirit
@@ -79,9 +75,14 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
   const gestures = options.gestures ?? []
   const boundEmotions = options.boundEmotions ?? []
 
-  const emotionList = ALLOWED_EMOTIONS.map((name) => {
-    const bound = boundEmotions.includes(name) ? ' (+ body animation)' : ''
-    return `  - ${name}${bound}`
+  // `boundEmotions` is the list of VRM-primary emotion names that have a
+  // paired body clip on the active preset. Recipe emotions (excitement,
+  // curiosity, …) project to one of those primaries — if the primary is
+  // bound, the compound fires a body clip too. See `emotion-vocab.ts`.
+  const boundSet = new Set(boundEmotions)
+  const emotionList = ALLOWED_EMOTION_NAMES.map((name) => {
+    const hasBody = emotionHasBodyAnimation(name, boundSet)
+    return `  - ${name}${hasBody ? ' (+ body animation)' : ''}`
   }).join('\n')
 
   const gestureBlock = gestures.length

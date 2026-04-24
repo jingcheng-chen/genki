@@ -5,6 +5,7 @@ import { createMarkerParser, parseMarker } from './marker-parser'
 import { createStreamingSpeaker } from './speech-pipeline'
 import { getExpressionController } from '../vrm/expression-controller'
 import { getActiveAnimationController } from '../vrm/animation-controller'
+import { resolveEmotion } from '../vrm/emotion-vocab'
 import { tracer } from '../observability/tracer'
 
 export interface TurnHandle {
@@ -105,15 +106,27 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
       })
       if (!parsed) return
       if (parsed.type === 'act') {
-        // Face: ADSR envelope for the expression preset
+        // Face: ADSR envelope for the expression preset. The controller
+        // resolves aliases + recipes internally, so we pass the raw name.
         expression.trigger(parsed.emotion, parsed.intensity)
-        // Body: if the preset has a clip bound to this emotion, it plays in
-        // parallel. triggerEmotion returns false for unbound emotions — we
-        // just rely on the facial expression in that case.
-        const bound = animation?.triggerEmotion(parsed.emotion) ?? false
+        // Body: `VRMAnimationEntry.emotion` bindings are keyed to the six
+        // VRM primaries (happy/sad/angry/surprised/relaxed/neutral), so we
+        // canonicalize the raw name to its dominant primary before the
+        // lookup. `excitement` → `happy` → the `blush` clip fires, even
+        // though the face is a multi-channel happy+surprised blend.
+        // Falls through to the raw name if the resolver doesn't know it —
+        // a preset could still bind a body clip to a custom emotion name.
+        const resolved = resolveEmotion(parsed.emotion)
+        const animKey = resolved?.primary ?? parsed.emotion
+        const bound = animation?.triggerEmotion(animKey) ?? false
         tracer.emit({
           category: 'anim.emotion',
-          data: { emotion: parsed.emotion, intensity: parsed.intensity, bound },
+          data: {
+            emotion: parsed.emotion,
+            resolvedPrimary: resolved?.primary ?? null,
+            intensity: parsed.intensity,
+            bound,
+          },
           turnId,
         })
         options.onEmotion?.(parsed.emotion, parsed.intensity)

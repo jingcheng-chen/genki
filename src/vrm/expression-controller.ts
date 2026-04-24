@@ -1,4 +1,9 @@
 import type { VRM } from '@pixiv/three-vrm'
+import {
+  PRESET_EMOTIONS,
+  resolveEmotion,
+  type EmotionName,
+} from './emotion-vocab'
 
 /**
  * Emotion state machine for VRM expressions.
@@ -6,47 +11,19 @@ import type { VRM } from '@pixiv/three-vrm'
  * VRM 0.x/1.x require these preset expression names:
  *   happy · angry · sad · relaxed · surprised · neutral
  *
- * An `ACT` marker from the LLM triggers a timed blend: the target emotion
- * lerps up over `fadeInMs`, holds at full intensity for `holdMs`, then
- * lerps back to 0 over `fadeOutMs`. One emotion active at a time — a
- * second `ACT` cross-fades, the previous one decays immediately.
+ * An `ACT` marker from the LLM triggers a timed blend: the resolved
+ * components lerp up over `fadeInMs`, hold at full intensity for `holdMs`,
+ * then lerp back to 0 over `fadeOutMs`. One `active` emotion lives at a
+ * time (may span multiple channels after blend-recipe resolution). A second
+ * `ACT` cross-fades — the previous one decays immediately.
+ *
+ * Multi-channel support lets us cover the reference companion's wider
+ * emotion vocabulary (curiosity, excitement, love, stress, frustration)
+ * without new VRM blendshapes. See `emotion-vocab.ts` for the resolver.
  *
  * Does NOT touch the mouth blendshapes (aa/ih/ou/ee/oh) — those are owned
  * by the lip-sync driver so the two systems don't stomp each other.
  */
-
-const PRESET_EMOTIONS = [
-  'happy',
-  'angry',
-  'sad',
-  'relaxed',
-  'surprised',
-  'neutral',
-] as const
-
-type EmotionName = (typeof PRESET_EMOTIONS)[number]
-
-/** LLM may emit synonyms; normalize to the VRM preset names. */
-const SYNONYMS: Record<string, EmotionName> = {
-  joy: 'happy',
-  excited: 'happy',
-  surprise: 'surprised',
-  shocked: 'surprised',
-  calm: 'relaxed',
-  thinking: 'relaxed',
-  think: 'relaxed',
-  mad: 'angry',
-  sorrowful: 'sad',
-  upset: 'sad',
-}
-
-function normalizeEmotion(raw: string): EmotionName | null {
-  const lower = raw.toLowerCase()
-  if ((PRESET_EMOTIONS as readonly string[]).includes(lower)) {
-    return lower as EmotionName
-  }
-  return SYNONYMS[lower] ?? null
-}
 
 export interface ExpressionControllerOptions {
   /** Seconds to ramp in to full intensity. @default 0.25 */
@@ -63,13 +40,17 @@ export function createExpressionController(options: ExpressionControllerOptions 
   const fadeOutMs = options.fadeOutMs ?? 600
 
   interface ActiveEmotion {
-    name: EmotionName
-    intensity: number
+    /** Resolved blend — may contain 1 (primary / synonym) or N (recipe)
+     *  components. Each component drives one of the 6 VRM preset channels. */
+    components: ReadonlyArray<{ name: EmotionName; weight: number }>
+    /** Master gain from the LLM's `intensity` field, clamped to [0, 1]. */
+    masterIntensity: number
+    /** perf.now() at trigger — anchor for the ADSR envelope. */
     startedAt: number
   }
 
   let active: ActiveEmotion | null = null
-  // Smoothed per-emotion values, so cross-fades don't snap.
+  // Smoothed per-channel weights so cross-fades don't snap.
   const smoothed: Record<EmotionName, number> = {
     happy: 0, angry: 0, sad: 0, relaxed: 0, surprised: 0, neutral: 0,
   }
@@ -77,11 +58,11 @@ export function createExpressionController(options: ExpressionControllerOptions 
   return {
     /** Apply an ACT marker from the LLM. Unknown emotion names are ignored. */
     trigger(rawName: string, intensity: number) {
-      const name = normalizeEmotion(rawName)
-      if (!name) return
+      const resolved = resolveEmotion(rawName)
+      if (!resolved) return
       active = {
-        name,
-        intensity: Math.max(0, Math.min(1, intensity)),
+        components: resolved.face,
+        masterIntensity: Math.max(0, Math.min(1, intensity)),
         startedAt: performance.now(),
       }
     },
@@ -92,10 +73,10 @@ export function createExpressionController(options: ExpressionControllerOptions 
     },
 
     /**
-     * Called each frame BEFORE vrm.update(delta). Computes the target
-     * weight for the active emotion from the ADSR envelope, smooths all
-     * preset emotion weights toward their targets, and writes to the
-     * expression manager.
+     * Called each frame BEFORE vrm.update(delta). Computes the per-channel
+     * target weights from the active emotion's ADSR envelope, smooths all
+     * preset channels toward their targets, and writes to the expression
+     * manager.
      */
     update(vrm: VRM, delta: number) {
       if (!vrm.expressionManager) return
@@ -118,7 +99,16 @@ export function createExpressionController(options: ExpressionControllerOptions 
           if (env <= 0) active = null
         }
 
-        if (active) targets[active.name] = active.intensity * env
+        if (active) {
+          // Drive each component channel. max() (not +=) guards against
+          // duplicate channels leaking in from a mis-authored recipe — the
+          // effect is "pick the loudest expression of this channel", which
+          // is always what we want.
+          for (const c of active.components) {
+            const w = c.weight * active.masterIntensity * env
+            targets[c.name] = Math.max(targets[c.name], w)
+          }
+        }
       }
 
       // Exponential smoothing (half-life ~80ms — quick enough for
