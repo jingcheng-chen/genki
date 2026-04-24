@@ -1,4 +1,25 @@
 import { getAudioContext } from '../audio/context'
+import type { CharacterVoiceSettings } from '../vrm/presets/types'
+
+export interface SynthesizeOptions {
+  voiceId?: string
+  signal?: AbortSignal
+  /**
+   * Spoken text that came *before* `text` in this reply. Used as v3's
+   * `previous_text` so the model plans prosody continuing from it rather
+   * than resetting to neutral at every chunk boundary.
+   */
+  previousText?: string
+  /**
+   * Spoken text that comes *after* `text` in this reply. Only available in
+   * the one-shot path where we know the full reply up front; the streaming
+   * speaker leaves this empty because it flushes chunks as soon as they
+   * complete.
+   */
+  nextText?: string
+  /** Per-character voice_settings override. */
+  voiceSettings?: CharacterVoiceSettings
+}
 
 /**
  * Synthesizes `text` via the server's /api/tts proxy and decodes the
@@ -20,13 +41,19 @@ import { getAudioContext } from '../audio/context'
  */
 export async function synthesize(
   text: string,
-  options: { voiceId?: string; signal?: AbortSignal } = {},
+  options: SynthesizeOptions = {},
 ): Promise<AudioBuffer> {
   const res = await fetch('/api/tts', {
     method: 'POST',
     signal: options.signal,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voiceId: options.voiceId }),
+    body: JSON.stringify({
+      text,
+      voiceId: options.voiceId,
+      previousText: options.previousText,
+      nextText: options.nextText,
+      voiceSettings: options.voiceSettings,
+    }),
   })
 
   if (!res.ok) {

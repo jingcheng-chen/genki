@@ -64,6 +64,15 @@ export const mika: VRMPreset = {
   animations: ANIMATIONS,
   licence: 'CC-BY 4.0 — VRoid AvatarSample_A',
   voiceId: VOICE_ID,
+  // Mika runs hot — biker, high-energy, teases people. Low stability opens
+  // up the emotional range; a solid style pass lets the character colour
+  // through instead of a flat "audiobook" read.
+  voiceSettings: {
+    stability: 0.3,
+    similarityBoost: 0.75,
+    style: 0.45,
+    useSpeakerBoost: true,
+  },
   persona: PERSONA,
   starters: STARTERS,
   returners: RETURNERS,

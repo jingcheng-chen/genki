@@ -1,34 +1,37 @@
 /**
  * Splits a block of text into TTS-friendly chunks.
  *
- * Strategy (mirrors AIRI's `chunkTTSInput`):
- *  - Hard flush on sentence terminators: . ? ! … 。！？
+ * Strategy:
+ *  - Hard flush on sentence terminators: . ? ! … 。！？ — the common case.
  *  - "Boost mode" for the first `boostChunks` chunks: lower word cap so the
  *    user hears SOMETHING fast (time-to-first-audio is the #1 feel factor).
- *  - Normal chunks are 8-14 words for natural prosody without ballooning
- *    synthesis latency.
+ *  - Normal chunks have a deliberately generous cap — ElevenLabs v3 needs a
+ *    meaningful span of text to plan prosody (breath, pitch contour,
+ *    emotional envelope). Too-small chunks produce the audible "stateless
+ *    neutral reset" at every boundary. The cap is a safety net; in practice
+ *    sentence terminators flush long before we hit it.
  *  - Trailing text shorter than `minChunkWords` is merged into the previous
  *    chunk instead of going alone (avoids a tiny "uh" tail).
  */
 
 export interface ChunkerOptions {
-  /** How many opening chunks to keep aggressively short. @default 2 */
+  /** How many opening chunks to keep aggressively short. @default 1 */
   boostChunks?: number
-  /** Max word count during boost mode. @default 6 */
+  /** Max word count during boost mode. @default 18 */
   boostMaxWords?: number
-  /** Max word count for normal chunks. @default 14 */
+  /** Soft max word count for normal chunks (sentence terminators flush first). @default 45 */
   normalMaxWords?: number
-  /** Trailing fragments shorter than this merge into the previous chunk. @default 3 */
+  /** Trailing fragments shorter than this merge into the previous chunk. @default 5 */
   minChunkWords?: number
 }
 
 const SENTENCE_TERMINATOR = /[.?!…。！？]\s*$/
 
 export function chunkText(text: string, options: ChunkerOptions = {}): string[] {
-  const boostChunks = options.boostChunks ?? 2
-  const boostMaxWords = options.boostMaxWords ?? 6
-  const normalMaxWords = options.normalMaxWords ?? 14
-  const minChunkWords = options.minChunkWords ?? 3
+  const boostChunks = options.boostChunks ?? 1
+  const boostMaxWords = options.boostMaxWords ?? 18
+  const normalMaxWords = options.normalMaxWords ?? 45
+  const minChunkWords = options.minChunkWords ?? 5
 
   const chunks: string[] = []
   let buffer = ''

@@ -6,6 +6,15 @@ import {
   type LipSyncDriver,
 } from '../vrm/lip-sync-driver'
 import { tracer } from '../observability/tracer'
+import type { CharacterVoiceSettings } from '../vrm/presets/types'
+
+/**
+ * How many characters of recent spoken text we hand to v3 as
+ * `previous_text`. Enough to carry a sentence or two of prosodic context;
+ * larger tails add latency with diminishing returns. 500 also matches the
+ * server-side safety cap.
+ */
+const PREV_TEXT_WINDOW = 500
 
 // ---------------------------------------------------------------------------
 // TTS-safe text sanitizer
@@ -127,7 +136,11 @@ function playBuffer(
 
 export function speak(
   text: string,
-  options: { voiceId?: string; chunker?: ChunkerOptions } = {},
+  options: {
+    voiceId?: string
+    chunker?: ChunkerOptions
+    voiceSettings?: CharacterVoiceSettings
+  } = {},
 ): SpeakHandle {
   const driver = getLipSyncDriver()
   if (!driver) {
@@ -146,15 +159,33 @@ export function speak(
     .map((c) => tracedSanitize(c, null))
     .filter((c): c is string => c !== null)
 
+  // One-shot path knows the full reply up front, so we get to pass BOTH
+  // previous_text and next_text. Clipped to the window so we don't pay for
+  // unused context on long chunks.
+  const prevTexts: string[] = []
+  const nextTexts: string[] = []
+  for (let i = 0; i < chunks.length; i++) {
+    const before = chunks.slice(0, i).join(' ')
+    const after = chunks.slice(i + 1).join(' ')
+    prevTexts.push(before.slice(-PREV_TEXT_WINDOW))
+    nextTexts.push(after.slice(0, PREV_TEXT_WINDOW))
+  }
+
   // Fire all TTS fetches in parallel — ElevenLabs handles a paragraph's
   // worth of concurrent requests fine. Playback order is preserved by the
   // for-loop below awaiting each promise in sequence.
-  const pending: Array<Promise<AudioBuffer | null>> = chunks.map((c) => {
+  const pending: Array<Promise<AudioBuffer | null>> = chunks.map((c, i) => {
     tracer.emit({
       category: 'tts.request',
       data: { text: c, voiceId: options.voiceId },
     })
-    return synthesize(c, { voiceId: options.voiceId, signal: ac.signal })
+    return synthesize(c, {
+      voiceId: options.voiceId,
+      signal: ac.signal,
+      previousText: prevTexts[i] || undefined,
+      nextText: nextTexts[i] || undefined,
+      voiceSettings: options.voiceSettings,
+    })
       .then((buf) => {
         tracer.emit({
           category: 'tts.audio-ready',
@@ -202,6 +233,13 @@ export interface StreamingSpeaker {
   consume: (delta: string) => void
   end: () => Promise<void>
   abort: () => void
+  /**
+   * Stashes a v3 audio tag (e.g. `[excited]`) to prepend to the very next
+   * TTS chunk. Called by the turn runner when an `<|ACT:…|>` marker fires,
+   * so the voice's emotion matches the face's. Only the next chunk is
+   * affected — set it again per marker. Pass `null` to clear.
+   */
+  setPendingAudioTag: (tag: string | null) => void
 }
 
 export function createStreamingSpeaker(
@@ -210,6 +248,7 @@ export function createStreamingSpeaker(
     chunker?: ChunkerOptions
     turnId?: string | null
     turnStartTs?: number
+    voiceSettings?: CharacterVoiceSettings
   } = {},
 ): StreamingSpeaker {
   const driver = getLipSyncDriver()
@@ -223,9 +262,9 @@ export function createStreamingSpeaker(
 
   // Chunker settings mirror the sync speak() path so the text→chunk mapping
   // is consistent whether the caller knows the full text or streams it.
-  const boostChunks = options.chunker?.boostChunks ?? 2
-  const boostMaxWords = options.chunker?.boostMaxWords ?? 6
-  const normalMaxWords = options.chunker?.normalMaxWords ?? 14
+  const boostChunks = options.chunker?.boostChunks ?? 1
+  const boostMaxWords = options.chunker?.boostMaxWords ?? 18
+  const normalMaxWords = options.chunker?.normalMaxWords ?? 45
 
   const SENTENCE_TERMINATOR = /[.?!…。！？]\s*$/
 
@@ -234,6 +273,12 @@ export function createStreamingSpeaker(
   let chunksEmitted = 0
   let buffer = ''
   let firstAudioSeen = false
+  // Audio tag to prepend to the next TTS chunk only. Cleared after use.
+  let pendingTag: string | null = null
+  // Rolling tail of actually-spoken literal text (NO audio tags) used as
+  // `previous_text` for the next TTS request. We want prosody continuity
+  // from the spoken line, not a literal "[excited]" echo in the context.
+  let spokenTail = ''
 
   // Playback loop runs in the background, draining pendingBuffers as they
   // resolve. We await it in end().
@@ -272,17 +317,44 @@ export function createStreamingSpeaker(
     tracer.emit({ category: 'ttsch.chunk', data: { text }, turnId })
     const speakable = tracedSanitize(text, turnId)
     if (!speakable) return
+
+    // Snapshot the previous_text BEFORE we extend spokenTail with this
+    // chunk — previous_text must reflect what was spoken prior to this one.
+    const previousText = spokenTail
+      ? spokenTail.slice(-PREV_TEXT_WINDOW)
+      : undefined
+
+    // Prepend a pending audio tag (set by turn.ts when an ACT marker fires)
+    // onto the text actually sent for synthesis. The tag directs v3's
+    // prosody but isn't a transcript of what was spoken, so we don't add
+    // it to spokenTail / chunkTexts.
+    const ttsText = pendingTag ? `${pendingTag} ${speakable}` : speakable
+    const tagUsed = pendingTag
+    pendingTag = null
+
     chunksEmitted++
     chunkTexts.push(speakable)
+    // Extend the rolling "spoken" tail with the clean literal, space-sep.
+    spokenTail = (spokenTail ? `${spokenTail} ${speakable}` : speakable).slice(
+      -PREV_TEXT_WINDOW * 2,
+    )
+
     tracer.emit({
       category: 'tts.request',
-      data: { text: speakable, voiceId: options.voiceId },
+      data: {
+        text: ttsText,
+        voiceId: options.voiceId,
+        audioTag: tagUsed,
+        hasPreviousText: !!previousText,
+      },
       turnId,
     })
     pendingBuffers.push(
-      synthesize(speakable, {
+      synthesize(ttsText, {
         voiceId: options.voiceId,
         signal: ac.signal,
+        previousText,
+        voiceSettings: options.voiceSettings,
       })
         .then((buf) => {
           tracer.emit({
@@ -364,5 +436,6 @@ export function createStreamingSpeaker(
       }
     },
     abort() { ac.abort() },
+    setPendingAudioTag(tag) { pendingTag = tag },
   }
 }

@@ -3,10 +3,12 @@ import { buildSystemPrompt } from '../prompts/system'
 import { createResponseCategorizer } from './response-categorizer'
 import { createMarkerParser, parseMarker } from './marker-parser'
 import { createStreamingSpeaker } from './speech-pipeline'
+import { emotionAudioTag } from './emotion-audio-tags'
 import { getExpressionController } from '../vrm/expression-controller'
 import { getActiveAnimationController } from '../vrm/animation-controller'
 import { resolveEmotion } from '../vrm/emotion-vocab'
 import { tracer } from '../observability/tracer'
+import type { CharacterVoiceSettings } from '../vrm/presets/types'
 
 export interface TurnHandle {
   /** Resolves when LLM + TTS + playback all complete. */
@@ -34,6 +36,8 @@ export interface RunTurnOptions {
   /** ElevenLabs voice id for this turn's TTS. Defaults to the server's
    *  fallback voice (Rachel) if omitted. */
   voiceId?: string
+  /** Per-character v3 voice_settings override (stability / style / …). */
+  voiceSettings?: CharacterVoiceSettings
   /** Opaque id the controller assigned this turn. Threaded through every
    *  tracer event so the Turns tab can group them. */
   turnId?: string
@@ -74,6 +78,7 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
 
   const speaker = createStreamingSpeaker({
     voiceId: options.voiceId,
+    voiceSettings: options.voiceSettings,
     turnId,
     turnStartTs,
   })
@@ -106,6 +111,12 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
       })
       if (!parsed) return
       if (parsed.type === 'act') {
+        // Voice: translate the same emotion to an ElevenLabs v3 audio tag
+        // so the TTS read matches the face. The tag is stashed on the
+        // speaker and consumed by the next TTS chunk only — subsequent
+        // chunks revert to a clean read unless another ACT marker fires.
+        const tag = emotionAudioTag(parsed.emotion, parsed.intensity)
+        if (tag) speaker.setPendingAudioTag(tag)
         // Face: ADSR envelope for the expression preset. The controller
         // resolves aliases + recipes internally, so we pass the raw name.
         expression.trigger(parsed.emotion, parsed.intensity)

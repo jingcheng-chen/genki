@@ -1,5 +1,5 @@
-import type { VRMPreset } from './types'
-import { makeStandardAnimations } from './animations'
+import type { VRMPreset } from './types';
+import { makeStandardAnimations } from './animations';
 
 // ---------------------------------------------------------------------------
 // Shiro — warm, earnest, a little stammery. Personality modelled on
@@ -21,7 +21,7 @@ import { makeStandardAnimations } from './animations'
 // block in the persona. The file still ships on disk; the gesture id just
 // never enters the system prompt, so even a mis-behaving LLM can't emit
 // a `<|PLAY:kissing|>` that the animation controller would honour.
-const ANIMATIONS = makeStandardAnimations('shiro', { exclude: ['kissing'] })
+const ANIMATIONS = makeStandardAnimations('shiro', { exclude: ['kissing'] });
 
 // Persona — Tohru-Honda-spirited. Sixteen, polite, nurturing, carries
 // grief with grace. Stammers when flustered. Believes in people.
@@ -127,6 +127,16 @@ export const shiro: VRMPreset = {
   animations: ANIMATIONS,
   licence: 'Derivative character design for educational use',
   voiceId: VOICE_ID,
+  // Shiro is gentle, soft-spoken, stammers when flustered. Higher stability
+  // keeps the read calm; a small style pass still lets the warmth through.
+  // Slight speed pull-back matches her polite cadence.
+  voiceSettings: {
+    stability: 0.1,
+    similarityBoost: 0.75,
+    style: 0.3,
+    useSpeakerBoost: true,
+    speed: 2,
+  },
   persona: PERSONA,
   starters: STARTERS,
   returners: RETURNERS,

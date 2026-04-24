@@ -137,6 +137,15 @@ export const ani: VRMPreset = {
   animations: ANIMATIONS,
   licence: 'CC-BY 4.0 — VRoid',
   voiceId: VOICE_ID,
+  // Ani is deliberately expressive — flirty, jealous, loud when jealous.
+  // Similar low-stability pass as Mika with a stronger style exaggeration
+  // so the persona's "crazy in love" register actually lands.
+  voiceSettings: {
+    stability: 0.28,
+    similarityBoost: 0.8,
+    style: 0.5,
+    useSpeakerBoost: true,
+  },
   persona: PERSONA,
   starters: STARTERS,
   returners: RETURNERS,

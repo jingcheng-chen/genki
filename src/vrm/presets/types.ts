@@ -8,6 +8,24 @@
 import type { EmotionName } from '../emotion-vocab'
 
 /**
+ * ElevenLabs v3 voice_settings override for a character. Any omitted field
+ * falls back to the server default (which in turn falls back to the model's
+ * stored voice settings). See ElevenLabs docs for meaning; in short:
+ *   - stability:        lower = more emotional range, higher = flatter
+ *   - similarityBoost:  how tightly to hold the original voice identity
+ *   - style:            exaggerate the speaker's style (0 = none)
+ *   - useSpeakerBoost:  small quality/similarity bump at a latency cost
+ *   - speed:            1.0 = default; <1 slower, >1 faster
+ */
+export interface CharacterVoiceSettings {
+  stability?: number
+  similarityBoost?: number
+  style?: number
+  useSpeakerBoost?: boolean
+  speed?: number
+}
+
+/**
  * A single outfit variant of a character's VRM model. A preset ships one or
  * more variants; `defaultModelId` picks which one loads by default.
  *
@@ -83,6 +101,13 @@ export interface VRMPreset {
    * audibly distinct.
    */
   voiceId: string
+  /**
+   * Per-character TTS voice_settings override. Tunes stability / style /
+   * speaker-boost to the character's personality (e.g. a low-stability /
+   * high-style pass lets Mika's biker energy actually come through instead
+   * of collapsing to a neutral read). Omit the field to use server defaults.
+   */
+  voiceSettings?: CharacterVoiceSettings
   /**
    * Full character persona sent as the top block of the system prompt.
    * Marker-protocol instructions (emotion/delay/gesture) are appended by

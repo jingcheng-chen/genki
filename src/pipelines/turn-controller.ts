@@ -8,6 +8,7 @@ import { enqueueExtraction } from '../memory/extractor'
 import { maybeRunCompaction } from '../memory/compactor'
 import { tracer } from '../observability/tracer'
 import { getActiveAnimationController } from '../vrm/animation-controller'
+import type { CharacterVoiceSettings } from '../vrm/presets/types'
 
 /**
  * Phase 5 orchestrator — owns the mic VAD, the live transcript, the chat
@@ -45,6 +46,7 @@ export interface TurnPreset {
   persona: string
   customInstructions?: string
   voiceId?: string
+  voiceSettings?: CharacterVoiceSettings
 }
 
 export interface TurnControllerOptions {
@@ -299,6 +301,7 @@ export function createTurnController(
       memoryBlock,
       retrievedFactIds,
       voiceId: preset.voiceId,
+      voiceSettings: preset.voiceSettings,
       onAssistantText: (delta) => {
         if (state === 'thinking') setState('speaking')
         liveAssistant += delta
@@ -471,7 +474,10 @@ export function createTurnController(
       const preset = options.getPreset()
       setState('speaking')
 
-      const handle = speak(trimmed, { voiceId: preset.voiceId })
+      const handle = speak(trimmed, {
+        voiceId: preset.voiceId,
+        voiceSettings: preset.voiceSettings,
+      })
       currentGreeting = handle
 
       // Mirror the normal turn flow: push to history so the user sees
