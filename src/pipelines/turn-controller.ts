@@ -1,5 +1,4 @@
 import { runTurn, type TurnHandle } from './turn'
-import { speak, type SpeakHandle } from './speech-pipeline'
 import { transcribe } from '../adapters/stt'
 import { createMicVAD, type VadHandle } from '../audio/vad'
 import type { ChatMessage } from '../adapters/llm'
@@ -8,6 +7,10 @@ import { enqueueExtraction } from '../memory/extractor'
 import { maybeRunCompaction } from '../memory/compactor'
 import { tracer } from '../observability/tracer'
 import { getActiveAnimationController } from '../vrm/animation-controller'
+import { runGreeting, type GreetingHandle } from './greeting'
+import { detectLanguage, resolveSessionLang } from './language'
+import { useCharacterStore } from '../stores/character'
+import { getPreset } from '../vrm/presets'
 import type { CharacterVoiceSettings } from '../vrm/presets/types'
 
 /**
@@ -78,6 +81,7 @@ export type TurnControllerEvent =
   | { type: 'emotion'; name: string; intensity: number }
   | { type: 'gesture'; id: string }
   | { type: 'error'; message: string }
+  | { type: 'greeting'; active: boolean }
 
 export interface TurnController {
   getState: () => TurnState
@@ -90,13 +94,22 @@ export interface TurnController {
 
   sendText: (text: string) => void
   /**
-   * Speak a pre-written line through the TTS one-shot (no LLM call) and
-   * push it to history as an assistant turn. Used for starters / returners
-   * — the character greets the user without consuming a model call. Falls
-   * through silently when another turn is already in flight or when the
-   * controller is busy.
+   * Generate and speak a greeting via the full LLM pipeline. Kicks off a
+   * "noticing" gesture (peek for starters, look_around for returners) at
+   * call time to mask the ~1.3s first-audio gap, then runs the LLM through
+   * the same categorizer / marker / TTS chain as normal turns.
+   *
+   * Falls through silently when another turn is already in flight or when
+   * the controller isn't at rest. On LLM error or 5s first-token timeout,
+   * the pipeline internally falls back to the preset's static roster line.
+   *
+   * Reports `true` while the greeting is pending so the UI can render a
+   * typing indicator.
    */
-  speakGreeting: (text: string) => Promise<void>
+  runGreeting: () => Promise<void>
+  /** True while a greeting is actively being generated / spoken. Used by
+   *  the chat panel to render a typing indicator during the LLM gap. */
+  isGreeting: () => boolean
   abort: () => void
   clearHistory: () => void
 
@@ -127,7 +140,8 @@ export function createTurnController(
   let micOn = false
 
   let currentTurn: TurnHandle | null = null
-  let currentGreeting: SpeakHandle | null = null
+  let currentGreeting: GreetingHandle | null = null
+  let greetingActive = false
   let bargeInTimer: ReturnType<typeof setTimeout> | null = null
   // Idle-break ("the user has been quiet") timer. Scheduled on entry to
   // `idle` when the last history entry is an assistant turn; cancelled on
@@ -233,10 +247,16 @@ export function createTurnController(
     currentTurn?.abort()
     currentTurn = null
     // A greeting playing when the user starts talking should stop the
-    // same way an LLM turn does — no partial-reply history entry though,
-    // since greetings are fixed strings already pushed in whole.
+    // same way an LLM turn does — the LLM-generated path has already
+    // streamed literals into liveAssistant and may have pushed the
+    // completed entry; the fallback path pushes the whole line at once.
+    // commitInterruptedAssistant above handles the in-flight case.
     currentGreeting?.abort()
     currentGreeting = null
+    if (greetingActive) {
+      greetingActive = false
+      emit({ type: 'greeting', active: false })
+    }
     resetLive()
     setState('listening')
   }
@@ -254,6 +274,10 @@ export function createTurnController(
     if (currentGreeting) {
       currentGreeting.abort()
       currentGreeting = null
+      if (greetingActive) {
+        greetingActive = false
+        emit({ type: 'greeting', active: false })
+      }
     }
 
     let userText = opts.text ?? ''
@@ -295,6 +319,13 @@ export function createTurnController(
     // User has acted — the current silence window ends here. Next time we
     // return to idle with an assistant tail, a fresh proactive can fire.
     proactiveFiredThisWindow = false
+    // Sniff the language of the user's turn and persist it. Cheap regex —
+    // CJK wins over latin when both are present. `null` returns leave the
+    // last-observed value alone (e.g. numbers-only / emoji-only turns).
+    const detectedLang = detectLanguage(trimmed)
+    if (detectedLang) {
+      useCharacterStore.getState().setLastUserLang(detectedLang)
+    }
     emit({ type: 'history' })
 
     setState('thinking')
@@ -625,30 +656,92 @@ export function createTurnController(
       void handleUserInput({ text })
     },
 
-    async speakGreeting(text) {
-      // Only speak when nothing else is in flight — we don't want the
+    async runGreeting() {
+      // Only greet when nothing else is in flight — we don't want a
       // greeting colliding with an assistant turn the user just kicked
       // off, and we don't want to interrupt the user's own speech.
       if (currentTurn || currentGreeting) return
       if (state !== 'idle') return
-      const trimmed = text.trim()
-      if (!trimmed) return
 
-      const preset = options.getPreset()
-      setState('speaking')
+      const turnPreset = options.getPreset()
+      // The greeting pipeline needs the full preset (starters / returners
+      // rosters, defaultLanguage). TurnPreset is a thin snapshot, so
+      // re-resolve the full preset from the registry here.
+      const fullPreset = getPreset(turnPreset.id)
+      const store = useCharacterStore.getState()
+      const visitCount = store.greetedPresets[turnPreset.id] ?? 0
+      const kind: 'starter' | 'returner' = visitCount === 0 ? 'starter' : 'returner'
+      const lang = resolveSessionLang(fullPreset, store.lastUserLang)
 
-      const handle = speak(trimmed, {
-        voiceId: preset.voiceId,
-        voiceSettings: preset.voiceSettings,
+      // Record the greeting BEFORE the async work so a quick second
+      // invocation (e.g. a re-mount during hot-reload) can't double-fire.
+      store.recordGreeting(turnPreset.id)
+
+      // "Noticing" gesture — fires immediately to mask the ~1.3s first-
+      // audio gap. Peek reads as "first glance" for a starter;
+      // look_around reads as "scanning the room" for a returner.
+      const anim = getActiveAnimationController()
+      anim?.play(kind === 'starter' ? 'peek' : 'look_around')
+
+      setState('thinking')
+      greetingActive = true
+      emit({ type: 'greeting', active: true })
+
+      // Build the memory block just like a normal turn. Memory on the
+      // greeting is especially nice — the character gets to refer back to
+      // what they remember about the user in their opener.
+      let memoryBlock = ''
+      try {
+        const memo = await buildMemoryBlock(turnPreset.id)
+        memoryBlock = memo.text
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error('[turn-controller] memory load failed (greeting)', message)
+      }
+
+      const handle = runGreeting({
+        kind,
+        lang,
+        visitCount,
+        preset: fullPreset,
+        customInstructions: turnPreset.customInstructions,
+        memoryBlock,
+        voiceId: turnPreset.voiceId,
+        voiceSettings: turnPreset.voiceSettings,
+        onAssistantText: (delta) => {
+          if (state === 'thinking') setState('speaking')
+          liveAssistant += delta
+          emit({ type: 'assistant-delta', text: delta })
+        },
+        onEmotion: (name, intensity) => {
+          liveEmotions.push({ name, intensity })
+          emit({ type: 'emotion', name, intensity })
+        },
+        onGesture: (id) => {
+          emit({ type: 'gesture', id })
+        },
+        onStreamEnd: () => {
+          // Same reset-before-emit discipline as runTurn's onStreamEnd —
+          // otherwise subscribers would render the partial live preview
+          // alongside the just-pushed history entry.
+          history.push({
+            role: 'assistant',
+            content: liveAssistant,
+            emotions: liveEmotions.length ? [...liveEmotions] : undefined,
+          })
+          resetLive()
+          emit({ type: 'history' })
+        },
+        onFallbackText: (text) => {
+          // Static-fallback path — the greeting pipeline didn't get a
+          // first token, so it picked a roster line. Push it whole; no
+          // markers or emotions to track.
+          history.push({ role: 'assistant', content: text })
+          emit({ type: 'history' })
+          if (state === 'thinking') setState('speaking')
+        },
       })
       currentGreeting = handle
-
-      // Mirror the normal turn flow: push to history so the user sees
-      // what the character said. No emotions / markers on greetings —
-      // they're fixed strings, and we're not running them through the
-      // marker parser.
-      history.push({ role: 'assistant', content: trimmed })
-      emit({ type: 'history' })
 
       try {
         await handle.promise
@@ -658,16 +751,21 @@ export function createTurnController(
           message: err instanceof Error ? err.message : String(err),
         })
       } finally {
-        // Owner check: if fireBargeIn / handleUserInput already cleared
-        // `currentGreeting`, they also moved state past 'speaking' — we
-        // must not clobber that here. Only the natural-completion path
-        // (owner still ourselves) should return to idle.
         if (currentGreeting === handle) {
           currentGreeting = null
-          setState('idle')
+          greetingActive = false
+          emit({ type: 'greeting', active: false })
+          if ((state as TurnState) !== 'listening') setState('idle')
+        } else {
+          // Ownership was stolen (abort / barge-in cleared it); still make
+          // sure the indicator drops.
+          greetingActive = false
+          emit({ type: 'greeting', active: false })
         }
       }
     },
+
+    isGreeting: () => greetingActive,
 
     abort() {
       cancelBargeInTimer()
@@ -676,6 +774,10 @@ export function createTurnController(
       currentTurn = null
       currentGreeting?.abort()
       currentGreeting = null
+      if (greetingActive) {
+        greetingActive = false
+        emit({ type: 'greeting', active: false })
+      }
       resetLive()
       setState('idle')
     },
@@ -702,6 +804,7 @@ export function createTurnController(
       currentTurn = null
       currentGreeting?.abort()
       currentGreeting = null
+      greetingActive = false
       if (vad) {
         await vad.destroy()
         vad = null

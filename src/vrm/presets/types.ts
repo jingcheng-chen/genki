@@ -8,6 +8,13 @@
 import type { EmotionName } from '../emotion-vocab'
 
 /**
+ * Languages the companion explicitly supports. The greeting pipeline,
+ * fallback roster, and language-sniff heuristic all key off this union.
+ * Adding a language means a new code AND new greeting lines per preset.
+ */
+export type Lang = 'en-US' | 'zh-CN'
+
+/**
  * ElevenLabs v3 voice_settings override for a character. Any omitted field
  * falls back to the server default (which in turn falls back to the model's
  * stored voice settings). See ElevenLabs docs for meaning; in short:
@@ -116,15 +123,24 @@ export interface VRMPreset {
    */
   persona: string
   /**
-   * Lines spoken on the FIRST visit for this preset (count = 0 in the
-   * character store). One is picked at random. Plain text — no markers,
-   * no "Say:" wrapping; synthesized directly through the TTS one-shot.
+   * The language the character defaults to when we have no other signal
+   * (no persisted lastUserLang, no matching navigator.language). The
+   * greeting pipeline and the persona's "default to X" line both key off
+   * this.
    */
-  starters: string[]
+  defaultLanguage: Lang
   /**
-   * Lines spoken on subsequent visits (count >= 1). Same semantics as
-   * `starters`.
+   * Static fallback roster for the FIRST visit (greetedPresets count = 0).
+   * Keyed by language — one is picked at random from the matching pool.
+   * Used when the LLM-generated greeting errors out or times out. Plain
+   * text — no markers, no "Say:" wrapping; synthesized directly through
+   * the TTS one-shot.
    */
-  returners: string[]
+  starters: Record<Lang, string[]>
+  /**
+   * Static fallback roster for subsequent visits (count >= 1). Same
+   * per-language shape as `starters`.
+   */
+  returners: Record<Lang, string[]>
   defaultCameraOffset?: [number, number, number]
 }

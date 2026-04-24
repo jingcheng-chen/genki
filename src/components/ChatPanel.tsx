@@ -78,6 +78,7 @@ export function ChatPanel() {
   const [micOn, setMicOn] = useState(false)
   const [micPending, setMicPending] = useState(false)
   const [input, setInput] = useState('')
+  const [greetingActive, setGreetingActive] = useState(false)
 
   const listRef = useRef<HTMLDivElement | null>(null)
 
@@ -99,6 +100,9 @@ export function ChatPanel() {
           // The in-panel inline error (below the message that failed)
           // is gone; toasts are the primary surface now.
           pushToast({ kind: 'error', message: ev.message })
+          break
+        case 'greeting':
+          setGreetingActive(ev.active)
           break
       }
     })
@@ -127,25 +131,17 @@ export function ChatPanel() {
 
   // Starter / returner greeting — fires once per (preset × page-load) as
   // soon as audio is ready. The `greetedPresets` counter in the character
-  // store persists across reloads, so visit-one gets a starter and
-  // every subsequent open gets a returner even after a full page refresh.
-  // `greetedThisMount` dedupes within a single mount so a preset switch
-  // back-and-forth still triggers a fresh greeting per direction.
+  // store persists across reloads, so visit-one gets a starter and every
+  // subsequent open gets a returner even after a full page refresh. The
+  // controller itself picks the kind and language via `runGreeting`; we
+  // just gate it on a per-mount latch so a preset switch back-and-forth
+  // still triggers a fresh greeting per direction.
   const greetedThisMount = useRef<string | null>(null)
   useEffect(() => {
     if (!audioReady) return
     if (greetedThisMount.current === activePresetId) return
-
-    const preset = getPreset(activePresetId)
-    const { greetedPresets, recordGreeting } = useCharacterStore.getState()
-    const count = greetedPresets[activePresetId] ?? 0
-    const pool = count === 0 ? preset.starters : preset.returners
-    if (pool.length === 0) return
-
-    const line = pool[Math.floor(Math.random() * pool.length)]
     greetedThisMount.current = activePresetId
-    recordGreeting(activePresetId)
-    void controller.speakGreeting(line).catch(() => {
+    void controller.runGreeting().catch(() => {
       // Errors are already surfaced via the controller's 'error' event.
     })
   }, [audioReady, activePresetId, controller])
@@ -279,6 +275,11 @@ export function ChatPanel() {
         {liveAssistant && (
           <Turn turn={{ role: 'assistant', content: liveAssistant }} live />
         )}
+        {/* Greeting typing indicator — masks the ~1.3s first-audio gap at
+            session open. Only shown when we haven't started streaming
+            literal text yet; once the LLM begins emitting the live turn
+            row renders its own preview and this would be redundant. */}
+        {greetingActive && !liveAssistant && <TypingIndicator />}
       </div>
 
       <textarea
@@ -427,6 +428,34 @@ function EphemeralTurn({
     <div className={kind === 'user' ? 'text-right' : 'text-left'}>
       <div className="inline-block max-w-[85%] rounded-md bg-cyan-950/60 px-2 py-1 align-top text-cyan-200/80">
         {label}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Three-dots typing indicator. Shown on the assistant side while a
+ * greeting is being generated but no literal text has streamed yet —
+ * i.e. during the ~1.3s LLM-to-first-audio gap. Pure Tailwind; the
+ * stagger uses inline animation delays on top of the built-in
+ * `animate-bounce`.
+ */
+function TypingIndicator() {
+  return (
+    <div className="text-left">
+      <div className="inline-flex items-center gap-1 rounded-md bg-zinc-800 px-2 py-1.5 align-top">
+        <span
+          className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400"
+          style={{ animationDelay: '0ms' }}
+        />
+        <span
+          className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400"
+          style={{ animationDelay: '120ms' }}
+        />
+        <span
+          className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400"
+          style={{ animationDelay: '240ms' }}
+        />
       </div>
     </div>
   )

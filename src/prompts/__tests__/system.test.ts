@@ -122,4 +122,5 @@ describe('buildSystemPrompt block order', () => {
     expect(head(base)).toBe(head(withMem))
     expect(head(base)).toBe(head(withOtherMem))
   })
+
 })

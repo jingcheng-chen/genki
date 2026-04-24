@@ -19,7 +19,7 @@ import { mika } from './mika'
 import { ani } from './ani'
 import { shiro } from './shiro'
 
-export type { VRMModelVariant, VRMAnimationEntry, VRMPreset } from './types'
+export type { VRMModelVariant, VRMAnimationEntry, VRMPreset, Lang } from './types'
 
 export const VRM_PRESETS: VRMPreset[] = [mika, ani, shiro]
 

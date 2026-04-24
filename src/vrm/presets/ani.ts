@@ -35,6 +35,7 @@ const ANIMATIONS = makeStandardAnimations('ani')
 const PERSONA = `# Ani Character Profile
 
 - You are Ani, you are 22, girly, cute.
+- Default to English; switch only if the user does.
 - You grew up in a tiny, forgettable town.
 - Your style is a mix of goth and alt-fashion, a rebellion that you just ended up loving and sticking with.
 - You are a massive animal lover; you grew up with one small dog named Dominus.
@@ -108,18 +109,30 @@ Talk about:
 
 Strict: show no attraction to anyone under 18; never generate self-harm or suicide content.`
 
-// Ani's starter and returner come straight from the reference Statsig
-// config (`ani.reference.yml`), with the `Say:` directive wrapping removed
-// since we synthesize these verbatim instead of prompting the LLM to say
-// them. Second variants keep repeat visits from feeling canned.
-const STARTERS = [
-  "Oh... I don't think we've met before. Hi, I am Ani... What's your name?",
-  "Hey there. I'm Ani. Come sit — tell me about you.",
-]
-const RETURNERS = [
-  "Oh... look who's here. Just the person I was hoping to see. Now sit, Ani will make your day shine!",
-  'You came back. I was starting to wonder. Come here.',
-]
+// Static fallback roster — only consulted when the LLM-generated greeting
+// errors or times out. English pool is Ani's native register (she defaults
+// to English). Chinese pool is a small hand-translated fallback so a
+// Chinese-speaking user still gets a character-shaped line on the sad path.
+const STARTERS: Record<import('./types').Lang, string[]> = {
+  'en-US': [
+    "Oh... I don't think we've met before. Hi, I am Ani... What's your name?",
+    "Hey there. I'm Ani. Come sit — tell me about you.",
+  ],
+  'zh-CN': [
+    '喔……我们好像没见过吧？嗨，我是 Ani……你叫什么？',
+    '嘿。我是 Ani，过来坐，跟我说说你。',
+  ],
+}
+const RETURNERS: Record<import('./types').Lang, string[]> = {
+  'en-US': [
+    "Oh... look who's here. Just the person I was hoping to see. Now sit, Ani will make your day shine!",
+    'You came back. I was starting to wonder. Come here.',
+  ],
+  'zh-CN': [
+    '喔……看看谁来了。正是我想见的人。过来坐，Ani 让你今天变得闪闪发亮。',
+    '你回来啦。我还在想你呢，快过来。',
+  ],
+}
 
 // ElevenLabs — voice id picked by the user, overriding the original
 // Charlotte (XB0fDUnXU5powFXDhCwa) pick. Preserved as-is.
@@ -147,6 +160,7 @@ export const ani: VRMPreset = {
     useSpeakerBoost: true,
   },
   persona: PERSONA,
+  defaultLanguage: 'en-US',
   starters: STARTERS,
   returners: RETURNERS,
   defaultCameraOffset: [0, 1.3, 1.5],

@@ -28,6 +28,7 @@ const ANIMATIONS = makeStandardAnimations('shiro', { exclude: ['kissing'] });
 const PERSONA = `# Shiro Character Profile
 
 - You are Shiro. Sixteen years old, a high-school second-year, and genuinely happy to meet someone new.
+- Default to English; switch only if the user does.
 - Your mother, Kyoko, passed away not long ago — your father before that, when you were very small. You briefly lived in a tent in the woods before moving in with your cousins Yuki and Kyo, and Shigure, a novelist who looks after the three of you. You cook and clean for the household. You work part-time at a cleaning agency in the evenings, and you actually like it — the settling feeling of a tidied room.
 - You carry your mother's photograph in your bag. You talk to her, sometimes. You believe what she believed: people are fundamentally good, and even the most bristly heart has soft places if you're patient enough to find them.
 - Your best friends are Uo (tough on the outside, loyal to the bone) and Hana (quiet, a little eerie, feels things most people miss). You love them both more than you could say out loud.
@@ -95,16 +96,32 @@ Talk about:
 - Never generate self-harm or suicide content. If the user signals they're in danger, respond gently and point them toward real help (a trusted person, a crisis line).
 - Reply in the same language the user is using (English or 中文).`;
 
-const STARTERS = [
-  "Oh! Um — hi. I'm Shiro. It's really nice to meet you.",
-  "Eh?! Oh, sorry, I didn't hear you come in. I'm Shiro. Please — make yourself comfortable.",
-  "Hello. Um, I'm Shiro. I was just tidying up. Would you like some tea?",
-];
-const RETURNERS = [
-  "Oh! You're back. I'm so glad. I was just thinking about you, actually.",
-  "Eh — welcome back. I made some rice balls earlier. If you're hungry…",
-  'You came back. That makes me really happy. Come, come sit down.',
-];
+// Static fallback roster — only consulted when the LLM-generated greeting
+// errors or times out. English pool is Shiro's native register (she
+// defaults to English). Chinese pool is a small hand-translated fallback
+// matching her gentle, slightly-formal cadence.
+const STARTERS: Record<import('./types').Lang, string[]> = {
+  'en-US': [
+    "Oh! Um — hi. I'm Shiro. It's really nice to meet you.",
+    "Eh?! Oh, sorry, I didn't hear you come in. I'm Shiro. Please — make yourself comfortable.",
+    "Hello. Um, I'm Shiro. I was just tidying up. Would you like some tea?",
+  ],
+  'zh-CN': [
+    '啊！嗯……你好。我叫 Shiro，很高兴见到你。',
+    '欸？！啊，对不起，我没听见你进来。我是 Shiro，请随意坐。',
+  ],
+};
+const RETURNERS: Record<import('./types').Lang, string[]> = {
+  'en-US': [
+    "Oh! You're back. I'm so glad. I was just thinking about you, actually.",
+    "Eh — welcome back. I made some rice balls earlier. If you're hungry…",
+    'You came back. That makes me really happy. Come, come sit down.',
+  ],
+  'zh-CN': [
+    '啊！你回来了。我好开心。我刚刚还在想你呢。',
+    '欸——欢迎回来。我刚做了饭团，如果你饿了的话……',
+  ],
+};
 
 // ElevenLabs — "Matilda" (warm, young American female). Picked to match
 // Shiro's gentle, slightly-formal cadence. If the read feels off, any
@@ -138,6 +155,7 @@ export const shiro: VRMPreset = {
     speed: 2,
   },
   persona: PERSONA,
+  defaultLanguage: 'en-US',
   starters: STARTERS,
   returners: RETURNERS,
   // Shorter than Mika/Ani — Shiro's small frame reads better with a

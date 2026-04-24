@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { DEFAULT_PRESET_ID } from '../vrm/presets'
+import type { Lang } from '../vrm/presets'
 
 /**
  * Minimal persisted state for Phase 6:
@@ -41,6 +42,18 @@ interface CharacterState {
    * grows.
    */
   greetedPresets: Record<string, number>
+  /**
+   * Last-observed user language, sniffed cheaply from the user's
+   * transcript/input after each turn (CJK → 'zh-CN', latin → 'en-US'). Used
+   * by the greeting pipeline to decide which language to open the next
+   * session in. `null` = no signal yet; resolver falls through to
+   * navigator.language and finally the preset's `defaultLanguage`.
+   *
+   * Shared across characters by design — if the user just spent a session
+   * speaking Chinese with Mika, Ani should open in Chinese too rather than
+   * resetting to per-preset defaults.
+   */
+  lastUserLang: Lang | null
   /** True once persist middleware has finished loading from localStorage.
    *  Consumers (StartGate) can treat this as the gate for "know which
    *  character to render". */
@@ -48,6 +61,7 @@ interface CharacterState {
   setActivePresetId: (id: string) => void
   setCustomInstructions: (presetId: string, text: string) => void
   recordGreeting: (presetId: string) => void
+  setLastUserLang: (lang: Lang) => void
   setHasHydrated: (v: boolean) => void
 }
 
@@ -57,6 +71,7 @@ export const useCharacterStore = create<CharacterState>()(
       activePresetId: DEFAULT_PRESET_ID,
       customInstructions: {},
       greetedPresets: {},
+      lastUserLang: null,
       // Zustand's persist middleware sets this synchronously below during
       // onRehydrateStorage's finish callback. Start true-adjacent-to-load
       // so the UI doesn't block on an empty cache.
@@ -73,6 +88,7 @@ export const useCharacterStore = create<CharacterState>()(
             greetedPresets: { ...state.greetedPresets, [presetId]: prev + 1 },
           }
         }),
+      setLastUserLang: (lang) => set({ lastUserLang: lang }),
       setHasHydrated: (v) => set({ hasHydrated: v }),
     }),
     {
@@ -89,6 +105,7 @@ export const useCharacterStore = create<CharacterState>()(
         activePresetId: state.activePresetId,
         customInstructions: state.customInstructions,
         greetedPresets: state.greetedPresets,
+        lastUserLang: state.lastUserLang,
       }),
       onRehydrateStorage: () => (state, error) => {
         // If rehydrate errored (quota exceeded, private mode, …), we

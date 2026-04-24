@@ -75,6 +75,13 @@ export const TRACE_CATEGORIES = [
   'turn.first-audio',
   'turn.end',
 
+  // Greeting (LLM-generated starter / returner at session open)
+  'greeting.start',
+  'greeting.first-token',
+  'greeting.first-audio',
+  'greeting.fallback',
+  'greeting.complete',
+
   // FPS / render loop
   'fps',
 ] as const
