@@ -1,4 +1,5 @@
-import type { VRMAnimationEntry, VRMPreset } from './types';
+import type { VRMPreset } from './types'
+import { makeStandardAnimations } from './animations'
 
 // ---------------------------------------------------------------------------
 // Shiro — warm, earnest, a little stammery. Personality modelled on
@@ -16,47 +17,11 @@ import type { VRMAnimationEntry, VRMPreset } from './types';
 // content is blocked by the Strict block below regardless of prompting.
 // ---------------------------------------------------------------------------
 
-const ANIMATIONS: VRMAnimationEntry[] = [
-  { id: 'idle', url: '/vrm/shiro/animations/idle.vrma', kind: 'idle' },
-
-  // Emotion bindings — same 5 primaries as Mika/Ani so the marker protocol
-  // fires her body clips too. `blush` → `happy` is our convention.
-  { id: 'blush', url: '/vrm/shiro/animations/blush.vrma', kind: 'emotion', emotion: 'happy' },
-  { id: 'sad', url: '/vrm/shiro/animations/sad.vrma', kind: 'emotion', emotion: 'sad' },
-  { id: 'angry', url: '/vrm/shiro/animations/angry.vrma', kind: 'emotion', emotion: 'angry' },
-  { id: 'surprised', url: '/vrm/shiro/animations/surprised.vrma', kind: 'emotion', emotion: 'surprised' },
-  { id: 'relax', url: '/vrm/shiro/animations/relax.vrma', kind: 'emotion', emotion: 'relaxed' },
-
-  // Gestures shared across presets.
-  { id: 'clapping', url: '/vrm/shiro/animations/clapping.vrma', kind: 'gesture' },
-  { id: 'goodbye', url: '/vrm/shiro/animations/goodbye.vrma', kind: 'gesture' },
-  { id: 'thinking', url: '/vrm/shiro/animations/thinking.vrma', kind: 'gesture' },
-  { id: 'sleepy', url: '/vrm/shiro/animations/sleepy.vrma', kind: 'gesture' },
-  { id: 'look_around', url: '/vrm/shiro/animations/looking_around.vrma', kind: 'gesture' },
-  { id: 'dance', url: '/vrm/shiro/animations/danceing.vrma', kind: 'gesture' },
-
-  // Gestures Shiro has that Mika/Ani don't — these map to the reference
-  // companion's `peek` and `spin` moves (see `ani.reference.analysis.md`).
-  // Filenames on disk are `peeking` / `spinning`; id is the canonical
-  // short form that the system prompt advertises.
-  { id: 'peek', url: '/vrm/shiro/animations/peeking.vrma', kind: 'gesture' },
-  { id: 'spin', url: '/vrm/shiro/animations/spinning.vrma', kind: 'gesture' },
-
-  // Available-but-rare for Shiro. She doesn't argue or yell by default,
-  // but the LLM might reach for them when she's standing up for someone
-  // (Uo, Hana, or one of her cousins).
-  { id: 'arguing', url: '/vrm/shiro/animations/arguing.vrma', kind: 'gesture' },
-  { id: 'yelling', url: '/vrm/shiro/animations/yelling.vrma', kind: 'gesture' },
-
-  // NOTICE: the following files are intentionally NOT registered as
-  // LLM-invokable gestures:
-  //   - `kissing.vrma` — off-brand for this character. Leaving the file in
-  //     place but unregistered. Re-enable only with explicit intent.
-  //   - `talking_1.vrma` … `talking_5.vrma` — speaking-idle overlays, not
-  //     discrete gestures. Our animation controller doesn't have a
-  //     "speaking idle" kind yet; registering them as gestures would let
-  //     the LLM fire them as one-off actions, which is wrong.
-];
+// Shared roster minus `kissing` — defence-in-depth on top of the Strict
+// block in the persona. The file still ships on disk; the gesture id just
+// never enters the system prompt, so even a mis-behaving LLM can't emit
+// a `<|PLAY:kissing|>` that the animation controller would honour.
+const ANIMATIONS = makeStandardAnimations('shiro', { exclude: ['kissing'] })
 
 // Persona — Tohru-Honda-spirited. Sixteen, polite, nurturing, carries
 // grief with grace. Stammers when flustered. Believes in people.

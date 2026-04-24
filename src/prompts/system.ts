@@ -165,7 +165,7 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     '',
     'Gestures triggered by content, not as decoration:',
     '',
-    '    <|PLAY:jump|> Yes! That is exactly what I was hoping you would say.',
+    '    <|PLAY:spin|> Ta-da! How is that for a spin?',
     '    Alright, I am heading out. <|PLAY:goodbye|> Talk soon, okay?',
     '    <|PLAY:clapping|> Okay, bravo, seriously, that is great.',
     '    <|PLAY:dance|> Okay this song is making me move a little.',

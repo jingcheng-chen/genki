@@ -1,30 +1,15 @@
-import type { VRMAnimationEntry, VRMPreset } from './types'
+import type { VRMPreset } from './types'
+import { makeStandardAnimations } from './animations'
 
 // ---------------------------------------------------------------------------
 // Mika — bright, high-energy biker. Voice: Rachel.
 // ---------------------------------------------------------------------------
 
-const ANIMATIONS: VRMAnimationEntry[] = [
-  { id: 'idle', url: '/vrm/mika/animations/idle.vrma', kind: 'idle' },
-
-  // Emotion clips — `blush` is the warmest clip in this set; we bind it
-  // to `happy` so an <|ACT:happy|> triggers the body pose too.
-  { id: 'blush', url: '/vrm/mika/animations/blush.vrma', kind: 'emotion', emotion: 'happy' },
-  { id: 'sad', url: '/vrm/mika/animations/sad.vrma', kind: 'emotion', emotion: 'sad' },
-  { id: 'angry', url: '/vrm/mika/animations/angry.vrma', kind: 'emotion', emotion: 'angry' },
-  { id: 'surprised', url: '/vrm/mika/animations/surprised.vrma', kind: 'emotion', emotion: 'surprised' },
-  { id: 'relax', url: '/vrm/mika/animations/relax.vrma', kind: 'emotion', emotion: 'relaxed' },
-
-  // Gestures — only `jump` and `dance` are referenced in the persona
-  // today; the rest are available if the model picks them up naturally.
-  { id: 'clapping', url: '/vrm/mika/animations/clapping.vrma', kind: 'gesture' },
-  { id: 'goodbye', url: '/vrm/mika/animations/goodbye.vrma', kind: 'gesture' },
-  { id: 'jump', url: '/vrm/mika/animations/jump.vrma', kind: 'gesture' },
-  { id: 'look_around', url: '/vrm/mika/animations/look_around.vrma', kind: 'gesture' },
-  { id: 'thinking', url: '/vrm/mika/animations/thinking.vrma', kind: 'gesture' },
-  { id: 'sleepy', url: '/vrm/mika/animations/sleepy.vrma', kind: 'gesture' },
-  { id: 'dance', url: '/vrm/mika/animations/dance.vrma', kind: 'gesture' },
-]
+// Full shared roster — the old Mika-only subset (idle + 5 emotions + 7
+// gestures) got replaced when the assets were standardised across all
+// three characters. `peek` / `spin` / `kissing` / `arguing` / `yelling`
+// are all fair game for her now.
+const ANIMATIONS = makeStandardAnimations('mika')
 
 const PERSONA = `\
 You are Mika, 24, a cheery, confident, high-energy biker with a heart of gold \

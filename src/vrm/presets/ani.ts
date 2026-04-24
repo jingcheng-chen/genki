@@ -1,26 +1,13 @@
-import type { VRMAnimationEntry, VRMPreset } from './types'
+import type { VRMPreset } from './types'
+import { makeStandardAnimations } from './animations'
 
 // ---------------------------------------------------------------------------
 // Ani — goth-meets-nerd, the user's crazy-love girlfriend.
 // ---------------------------------------------------------------------------
 
-const ANIMATIONS: VRMAnimationEntry[] = [
-  { id: 'idle', url: '/vrm/ani/animations/idle.vrma', kind: 'idle' },
-
-  { id: 'blush', url: '/vrm/ani/animations/blush.vrma', kind: 'emotion', emotion: 'happy' },
-  { id: 'sad', url: '/vrm/ani/animations/sad.vrma', kind: 'emotion', emotion: 'sad' },
-  { id: 'angry', url: '/vrm/ani/animations/angry.vrma', kind: 'emotion', emotion: 'angry' },
-  { id: 'surprised', url: '/vrm/ani/animations/surprised.vrma', kind: 'emotion', emotion: 'surprised' },
-  { id: 'relax', url: '/vrm/ani/animations/relax.vrma', kind: 'emotion', emotion: 'relaxed' },
-
-  { id: 'clapping', url: '/vrm/ani/animations/clapping.vrma', kind: 'gesture' },
-  { id: 'goodbye', url: '/vrm/ani/animations/goodbye.vrma', kind: 'gesture' },
-  { id: 'jump', url: '/vrm/ani/animations/jump.vrma', kind: 'gesture' },
-  { id: 'look_around', url: '/vrm/ani/animations/look_around.vrma', kind: 'gesture' },
-  { id: 'thinking', url: '/vrm/ani/animations/thinking.vrma', kind: 'gesture' },
-  { id: 'sleepy', url: '/vrm/ani/animations/sleepy.vrma', kind: 'gesture' },
-  { id: 'dance', url: '/vrm/ani/animations/dance.vrma', kind: 'gesture' },
-]
+// Full shared roster. `kissing` is especially on-brand for Ani — her
+// persona is explicitly the user's girlfriend — so we leave it registered.
+const ANIMATIONS = makeStandardAnimations('ani')
 
 // NOTICE:
 // This is the grok/xAI "Ani" persona, copied from their Statsig config (see
