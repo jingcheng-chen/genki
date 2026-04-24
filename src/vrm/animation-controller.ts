@@ -37,10 +37,18 @@ const DEFAULT_HOLD_SECONDS = 3.0
 // Crossfade durations specific to the talking base layer.
 // - idle → talking: a beat-in as speech starts.
 // - talking → talking: quick pivot within speech.
-// - talking → idle:  a settle after speech.
-const TALKING_FADE_IN = 0.35
-const TALKING_FADE_CHAIN = 0.25
-const TALKING_FADE_OUT = 0.4
+// - talking → idle:  a settle after speech. Longer than the others because
+//   we're blending from active arm motion to arms-at-sides — a fast fade
+//   reads as the arms "dropping" instead of settling.
+const TALKING_FADE_IN = 0.5
+const TALKING_FADE_CHAIN = 0.3
+const TALKING_FADE_OUT = 0.7
+
+// Used when an overlay (gesture / emotion body clip) ends and we need to
+// return to the talking base. Active-motion-to-active-motion transitions
+// need more overlap than the default gesture-to-idle return, otherwise the
+// handover snaps instead of blending.
+const OVERLAY_RETURN_TO_TALKING_FADE = 0.6
 
 interface PreparedEntry {
   entry: VRMAnimationEntry
@@ -199,24 +207,50 @@ export function createAnimationController(
 
   function returnToBase() {
     if (!overlay) return
-    const fade = crossfadeOf(overlay.entry)
 
-    // If a talking clip finished while this overlay was covering it, we
-    // can't fade back into a frozen clamped clip — pick a fresh talking
-    // clip now and fade the overlay into that one instead.
+    // Pick the target action and the fade duration.
+    //
+    // Three cases:
+    //   (a) speaking + talking clip finished during the overlay → pick a
+    //       fresh talking clip and prepare it as the new base. Fade is
+    //       long (active-to-active needs overlap).
+    //   (b) speaking, current talking clip is still running → fade back
+    //       to the current talking clip. Same long fade.
+    //   (c) not speaking → fade back to idle. Short fade is fine (the
+    //       base pose is still; no risk of the arms "dropping" hard).
+    let targetAction: AnimationAction
+    let fade: number
+
     if (speakingActive && talkingFinishedDuringOverlay) {
+      // (a)
       talkingFinishedDuringOverlay = false
-      engageTalkingClip(pickRandomTalking(), {
-        fromAction: overlay.action,
-        fade,
-      })
+      const chosen = pickRandomTalking()
+      targetAction = chosen.action
+      targetAction.reset()
+      targetAction.setLoop(LoopOnce, 1)
+      targetAction.clampWhenFinished = true
+      targetAction.enabled = true
+      targetAction.play()
+      currentTalkingEntry = chosen
+      lastTalkingId = chosen.entry.id
+      fade = OVERLAY_RETURN_TO_TALKING_FADE
+    } else if (speakingActive && currentTalkingEntry) {
+      // (b)
+      targetAction = currentTalkingEntry.action
+      targetAction.enabled = true
+      targetAction.play()
+      fade = OVERLAY_RETURN_TO_TALKING_FADE
     } else {
-      const base = getCurrentBaseAction()
-      base.enabled = true
-      base.setEffectiveWeight(1)
-      base.play()
-      base.crossFadeFrom(overlay.action, fade, true)
+      // (c)
+      targetAction = idleEntry!.action
+      targetAction.enabled = true
+      targetAction.play()
+      fade = crossfadeOf(overlay.entry)
     }
+
+    // Do the actual crossfade. crossFadeFrom handles weight interpolation;
+    // explicit setEffectiveWeight is unnecessary and can fight the schedule.
+    targetAction.crossFadeFrom(overlay.action, fade, true)
 
     overlay = null
     fadeBackAt = null
