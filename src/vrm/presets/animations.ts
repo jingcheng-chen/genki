@@ -62,11 +62,15 @@ const TEMPLATES: readonly AnimationTemplate[] = [
   // of the persona-level prohibition.
   { id: 'kissing', filename: 'kissing.vrma', kind: 'gesture' },
 
-  // NOTICE: `talking_1.vrma` … `talking_5.vrma` exist on disk for every
-  // preset but are intentionally NOT registered. They're speaking-idle
-  // overlays, not discrete actions — our animation controller doesn't
-  // have a "speaking idle" kind yet. Registering them as gestures would
-  // let the LLM fire them as one-off animations, which looks wrong.
+  // Speaking-idle variants. `kind: 'talking'` is invisible to the LLM —
+  // these never appear in the advertised gesture list. The animation
+  // controller chains them randomly while the turn controller is in the
+  // 'speaking' state (see `animation-controller.ts`, `startSpeaking`).
+  { id: 'talking_1', filename: 'talking_1.vrma', kind: 'talking' },
+  { id: 'talking_2', filename: 'talking_2.vrma', kind: 'talking' },
+  { id: 'talking_3', filename: 'talking_3.vrma', kind: 'talking' },
+  { id: 'talking_4', filename: 'talking_4.vrma', kind: 'talking' },
+  { id: 'talking_5', filename: 'talking_5.vrma', kind: 'talking' },
 ]
 
 export interface MakeAnimationsOptions {

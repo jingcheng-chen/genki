@@ -7,6 +7,7 @@ import { buildMemoryBlock } from '../memory/retriever'
 import { enqueueExtraction } from '../memory/extractor'
 import { maybeRunCompaction } from '../memory/compactor'
 import { tracer } from '../observability/tracer'
+import { getActiveAnimationController } from '../vrm/animation-controller'
 
 /**
  * Phase 5 orchestrator — owns the mic VAD, the live transcript, the chat
@@ -127,7 +128,22 @@ export function createTurnController(
 
   function setState(next: TurnState) {
     if (state === next) return
+    const prev = state
     state = next
+    // Drive the animation controller's talking chain off the state
+    // transition: entering 'speaking' starts the chain, leaving it (to any
+    // other state — idle, listening, transcribing) stops it. Using the
+    // single setState choke point means every path (normal reply, greeting,
+    // abort, barge-in, error) triggers the animation swap correctly without
+    // us having to remember to call it at each site.
+    //
+    // `getActiveAnimationController()` may return null before the VRM has
+    // mounted; the nullable access makes this a no-op during cold start.
+    if (next === 'speaking' && prev !== 'speaking') {
+      getActiveAnimationController()?.startSpeaking()
+    } else if (prev === 'speaking' && next !== 'speaking') {
+      getActiveAnimationController()?.stopSpeaking()
+    }
     emit({ type: 'state', state: next })
   }
 
