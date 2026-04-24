@@ -36,3 +36,4 @@ pnpm-debug.log*
 .turbo
 .claude
 .playwright-mcp
+.playwright-cli

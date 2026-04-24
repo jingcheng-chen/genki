@@ -3,7 +3,10 @@ import { buildSystemPrompt } from '../prompts/system'
 import { createResponseCategorizer } from './response-categorizer'
 import { createMarkerParser, parseMarker } from './marker-parser'
 import { createStreamingSpeaker } from './speech-pipeline'
-import { emotionAudioTag } from './emotion-audio-tags'
+import {
+  createInlineAudioTagStripper,
+  emotionAudioTag,
+} from './emotion-audio-tags'
 import { getExpressionController } from '../vrm/expression-controller'
 import { getActiveAnimationController } from '../vrm/animation-controller'
 import { resolveEmotion } from '../vrm/emotion-vocab'
@@ -38,6 +41,13 @@ export interface RunTurnOptions {
   voiceId?: string
   /** Per-character v3 voice_settings override (stability / style / …). */
   voiceSettings?: CharacterVoiceSettings
+  /**
+   * Non-user-initiated turn trigger. When set, the system prompt gains a
+   * small directive describing the reason (e.g. silence-break). Memory
+   * extraction callers typically skip for proactive turns because there is
+   * no user utterance to anchor facts against.
+   */
+  proactiveReason?: 'silence'
   /** Opaque id the controller assigned this turn. Threaded through every
    *  tracer event so the Turns tab can group them. */
   turnId?: string
@@ -91,16 +101,26 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
   // the extraction.
   let assistantAccum = ''
   let firstTokenSeen = false
+  // Streaming-safe stripper for inline audio tags (`[laughs]`, etc.) that
+  // Grok may split across deltas. See `createInlineAudioTagStripper`.
+  const audioTagStripper = createInlineAudioTagStripper()
 
   // Chain the parsers: LLM → categorizer → marker parser → outputs
   const marker = createMarkerParser({
     onLiteral: (text) => {
       tracer.emit({ category: 'marker.literal', data: { text }, turnId })
-      // Strip a bare marker that a model sometimes emits as `[ACT:happy]`
-      // by accident — it's not valid JSON, don't read it aloud.
+      // Two streams from one literal chunk:
+      //   - speaker sees the RAW text, including inline audio tags like
+      //     `[laughs]` — v3 reads those as delivery cues.
+      //   - UI transcript + memory extractor see the text with tags STRIPPED.
+      //     The stripper is stateful so a tag split across deltas
+      //     (`"Oh man, [laughs softl"` → `"y] I wi"`) is still caught.
       speaker.consume(text)
-      assistantAccum += text
-      options.onAssistantText?.(text)
+      const visible = audioTagStripper.push(text)
+      if (visible) {
+        assistantAccum += visible
+        options.onAssistantText?.(visible)
+      }
     },
     onSpecial: async (raw) => {
       const parsed = parseMarker(raw)
@@ -182,6 +202,7 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
         memoryBlock: options.memoryBlock,
         gestures: animation?.getGestureIds() ?? [],
         boundEmotions: animation?.getBoundEmotions() ?? [],
+        proactiveReason: options.proactiveReason,
       })
       tracer.emit({
         category: 'llm.request',
@@ -227,6 +248,14 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
 
       await categorizer.flush()
       await marker.flush()
+      // Drain any unclosed bracket tail the stripper held back. An orphan
+      // `[…` with no close goes through as-is — the LLM gave us a broken
+      // tag, surfacing it is better than silently losing text.
+      const tail = audioTagStripper.flush()
+      if (tail) {
+        assistantAccum += tail
+        options.onAssistantText?.(tail)
+      }
       tracer.emit({
         category: 'llm.stream-end',
         data: {

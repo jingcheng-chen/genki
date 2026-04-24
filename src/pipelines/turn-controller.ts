@@ -107,6 +107,14 @@ export interface TurnController {
 
 const BARGE_IN_GRACE_MS = 500
 
+/**
+ * How long the controller sits idle (post-assistant-turn) before the
+ * character proactively speaks up to break the silence. A full conversation
+ * beat is ~3-8s; past 20s the user has usually drifted away or is waiting
+ * for us to say something. 25s is a comfortable middle.
+ */
+const PROACTIVE_IDLE_MS = 25_000
+
 export function createTurnController(
   options: TurnControllerOptions,
 ): TurnController {
@@ -121,6 +129,13 @@ export function createTurnController(
   let currentTurn: TurnHandle | null = null
   let currentGreeting: SpeakHandle | null = null
   let bargeInTimer: ReturnType<typeof setTimeout> | null = null
+  // Idle-break ("the user has been quiet") timer. Scheduled on entry to
+  // `idle` when the last history entry is an assistant turn; cancelled on
+  // any non-idle transition or user action. `firedThisWindow` keeps us to
+  // at most one proactive per silence window — the window resets when the
+  // user next acts (speak / type / clear / barge-in).
+  let proactiveTimer: ReturnType<typeof setTimeout> | null = null
+  let proactiveFiredThisWindow = false
 
   const listeners = new Set<(ev: TurnControllerEvent) => void>()
 
@@ -146,7 +161,33 @@ export function createTurnController(
     } else if (prev === 'speaking' && next !== 'speaking') {
       getActiveAnimationController()?.stopSpeaking()
     }
+    // Silence-break scheduling piggybacks on setState so every path that
+    // reaches idle starts the timer, and every path that leaves idle
+    // cancels it. No other site needs to know the timer exists.
+    if (next === 'idle') scheduleProactive()
+    else cancelProactive()
     emit({ type: 'state', state: next })
+  }
+
+  function cancelProactive() {
+    if (proactiveTimer !== null) {
+      clearTimeout(proactiveTimer)
+      proactiveTimer = null
+    }
+  }
+
+  function scheduleProactive() {
+    cancelProactive()
+    if (proactiveFiredThisWindow) return
+    if (history.length === 0) return
+    // Only when we're waiting on the user — if the last entry is the user's
+    // own turn, we've already replied's been-committed-to by a higher level.
+    const last = history[history.length - 1]
+    if (last.role !== 'assistant') return
+    proactiveTimer = setTimeout(() => {
+      proactiveTimer = null
+      void runProactiveTurn()
+    }, PROACTIVE_IDLE_MS)
   }
 
   function cancelBargeInTimer() {
@@ -251,6 +292,9 @@ export function createTurnController(
     }
 
     history.push({ role: 'user', content: trimmed })
+    // User has acted — the current silence window ends here. Next time we
+    // return to idle with an assistant tail, a fresh proactive can fire.
+    proactiveFiredThisWindow = false
     emit({ type: 'history' })
 
     setState('thinking')
@@ -360,6 +404,125 @@ export function createTurnController(
       }
       // Emit `turn.end` outside the happy-path branch so aborted + errored
       // turns still show up on the Turns tab with a total duration.
+      tracer.emit({
+        category: 'turn.end',
+        data: {
+          totalMs: Date.now() - turnStartTs,
+          stages: {
+            llmFetchSentMs: null,
+            llmFirstByteMs: null,
+            llmFirstTokenMs: null,
+            ttsFirstAudioMs: null,
+            totalMs: Date.now() - turnStartTs,
+          },
+        },
+        turnId,
+      })
+    }
+  }
+
+  /**
+   * Silence-break turn: no user input, same LLM pipeline, but the system
+   * prompt gains a small "user went quiet, speak up gently" directive
+   * (see `buildSystemPrompt`'s `proactiveReason`). Skips memory extraction
+   * because there's no user utterance to anchor facts against.
+   *
+   * Firing is gated at the scheduler; this function is the inner "actually
+   * run it" with the same defensive re-checks so a stray fire after state
+   * drift (e.g. a user turn started in the gap between setTimeout and this
+   * function) still no-ops cleanly.
+   */
+  async function runProactiveTurn() {
+    if (currentTurn || currentGreeting) return
+    if (state !== 'idle') return
+    if (history.length === 0) return
+    const last = history[history.length - 1]
+    if (last.role !== 'assistant') return
+    if (proactiveFiredThisWindow) return
+    proactiveFiredThisWindow = true
+
+    const preset = options.getPreset()
+    const turnId = makeTurnId()
+    const turnStartTs = Date.now()
+    setState('thinking')
+
+    tracer.emit({
+      category: 'turn.start',
+      data: { characterId: preset.id, proactive: 'silence' },
+      turnId,
+    })
+
+    let memoryBlock = ''
+    let retrievedFactIds: string[] = []
+    try {
+      const memo = await buildMemoryBlock(preset.id)
+      memoryBlock = memo.text
+      retrievedFactIds = memo.retrievedFactIds
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[turn-controller] memory load failed (proactive)', message)
+      tracer.emit({
+        category: 'memory.error',
+        data: { message, stage: 'retrieve' },
+        turnId,
+      })
+    }
+
+    const handle = runTurn({
+      turnId,
+      turnStartTs,
+      messages: history.map((t) => ({ role: t.role, content: t.content })),
+      persona: preset.persona,
+      customInstructions: preset.customInstructions,
+      memoryBlock,
+      retrievedFactIds,
+      voiceId: preset.voiceId,
+      voiceSettings: preset.voiceSettings,
+      proactiveReason: 'silence',
+      onAssistantText: (delta) => {
+        if (state === 'thinking') setState('speaking')
+        liveAssistant += delta
+        emit({ type: 'assistant-delta', text: delta })
+      },
+      onEmotion: (name, intensity) => {
+        liveEmotions.push({ name, intensity })
+        emit({ type: 'emotion', name, intensity })
+      },
+      onGesture: (id) => {
+        emit({ type: 'gesture', id })
+      },
+      onStreamEnd: () => {
+        history.push({
+          role: 'assistant',
+          content: liveAssistant,
+          emotions: liveEmotions.length ? [...liveEmotions] : undefined,
+        })
+        resetLive()
+        emit({ type: 'history' })
+      },
+      // Deliberately no `onTurnComplete` — memory extraction needs a user
+      // turn to anchor facts, and a silence-break has none. Skipping is
+      // the safe default; we can revisit if we want the character's own
+      // musings treated as extractable facts later.
+    })
+    currentTurn = handle
+
+    try {
+      await handle.promise
+    } catch (err) {
+      emit({
+        type: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      })
+    } finally {
+      if (currentTurn === handle) {
+        currentTurn = null
+        // TS narrowed `state` to 'idle' via the early guard above and cannot
+        // see that callbacks + setState() widened it back during await; the
+        // cast restores the full `TurnState` for the comparison. Mirrors the
+        // barge-in exemption in handleUserInput.
+        if ((state as TurnState) !== 'listening') setState('idle')
+      }
       tracer.emit({
         category: 'turn.end',
         data: {
@@ -520,6 +683,8 @@ export function createTurnController(
     clearHistory() {
       history.length = 0
       resetLive()
+      cancelProactive()
+      proactiveFiredThisWindow = false
       emit({ type: 'history' })
     },
 
@@ -532,6 +697,7 @@ export function createTurnController(
 
     async destroy() {
       cancelBargeInTimer()
+      cancelProactive()
       currentTurn?.abort()
       currentTurn = null
       currentGreeting?.abort()

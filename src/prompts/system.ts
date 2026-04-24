@@ -34,6 +34,7 @@ import {
   ALLOWED_EMOTION_NAMES,
   emotionHasBodyAnimation,
 } from '../vrm/emotion-vocab'
+import { INLINE_AUDIO_TAGS } from '../pipelines/emotion-audio-tags'
 
 /**
  * Coarse time-of-day bucket used by the system prompt. Matches the spirit
@@ -69,6 +70,13 @@ export interface SystemPromptOptions {
   /** Emotion names that have a paired body animation on the active preset.
    *  Only a hint — emotions without a body clip still trigger the face. */
   boundEmotions?: string[]
+  /**
+   * Non-user-initiated trigger for this turn. `silence` means the user has
+   * gone quiet and the character should gently break the pause. Appended as
+   * a small directive in the dynamic tail so it never fires when the user
+   * has just spoken.
+   */
+  proactiveReason?: 'silence'
 }
 
 export function buildSystemPrompt(options: SystemPromptOptions): string {
@@ -145,6 +153,28 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     'You can pause in your speech with `<|DELAY:0.6|>` (seconds, max 10).',
     'Use pauses to breathe or sound thoughtful — not as filler.',
     '',
+    '## Audio tags (inline)',
+    '',
+    'You can sprinkle delivery cues directly into your speech as bracketed',
+    'tags. They colour the voice without showing up in the transcript. Use',
+    'sparingly — a tag every 2-3 turns at most. Position matters: put the',
+    'tag right where it should kick in.',
+    '',
+    'Available tags:',
+    ...INLINE_AUDIO_TAGS.map((t) => `  - [${t}]`),
+    '',
+    'Examples:',
+    '',
+    '    That is [laughs] ridiculous in the best way.',
+    '    [thoughtfully] Mm. I think you are onto something.',
+    '    [softly] Hey. Glad you came back.',
+    '    [whispers] Do not tell anyone I said that.',
+    "    Wait wait wait — [quickly] say that again, I missed it.",
+    '',
+    'Do NOT use audio tags to describe feelings — that is what `<|ACT:…|>`',
+    'is for, and the face and voice need to agree. Audio tags are for',
+    'delivery: a breath, a chuckle, a whispered aside, a faster pace.',
+    '',
     '## Marker examples',
     '',
     'These show how markers weave into natural speech. The marker fires at',
@@ -205,6 +235,22 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     '## Right now',
     '',
     `- Time of day for the user: ${getTimeOfDay()}.`,
+    ...(options.proactiveReason === 'silence'
+      ? [
+          '- The user has gone quiet for ~25 seconds. Say ONE short line',
+          '  that is CLEARLY DIFFERENT from your previous reply above.',
+          '  Acceptable moves (pick one):',
+          '    · a quiet acknowledgement of the silence',
+          '      ("mm", "...", "you still there?", "you zoned out?")',
+          '    · a tiny observation about the moment itself',
+          '      ("the quiet is kinda nice", "you sound miles away")',
+          '    · a brand-new question on a DIFFERENT topic',
+          '    · a tiny memory or tangent from your own life',
+          '  FORBIDDEN: repeating, paraphrasing, or continuing your',
+          '  previous reply. Do not re-ask the question you just asked.',
+          '  Under 12 words. One sentence. Be direct.',
+        ]
+      : []),
     '',
     ...customBlock,
     ...memoryBlockLines,
