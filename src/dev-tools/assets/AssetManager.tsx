@@ -10,6 +10,7 @@ import { AssetList } from './AssetList'
 import { PreviewPane } from './PreviewPane'
 import { useTriageHotkeys } from './useTriageHotkeys'
 import { buildAnimationViews } from './status'
+import { captureScreenshot, makeScreenshotFilename } from './screenshot'
 
 export function AssetManager() {
   const [characters, setCharacters] = useState<CharacterSummary[]>([])
@@ -172,6 +173,13 @@ export function AssetManager() {
     if (selectedCharacterId) reloadDetail(selectedCharacterId)
   }, [reloadCharacters, reloadDetail, selectedCharacterId])
 
+  const takeScreenshot = useCallback(async () => {
+    if (!selectedModelUrl) return
+    const filename = makeScreenshotFilename(selectedModelUrl, selectedAnimationUrl)
+    const ok = await captureScreenshot(filename)
+    if (!ok) setGlobalError('Screenshot failed (no active renderer)')
+  }, [selectedModelUrl, selectedAnimationUrl])
+
   // ---------------------------------------------------------------------------
   // Hotkeys.
   // ---------------------------------------------------------------------------
@@ -184,8 +192,16 @@ export function AssetManager() {
         onToggleLoop: toggleLoop,
         onDelete: deleteCurrentAnimation,
         onReload: reloadAll,
+        onScreenshot: takeScreenshot,
       }),
-      [stepAnimation, togglePlaying, toggleLoop, deleteCurrentAnimation, reloadAll],
+      [
+        stepAnimation,
+        togglePlaying,
+        toggleLoop,
+        deleteCurrentAnimation,
+        reloadAll,
+        takeScreenshot,
+      ],
     ),
   )
 
@@ -203,6 +219,7 @@ export function AssetManager() {
           <KeyHint k="L">loop</KeyHint>
           <KeyHint k="D">delete</KeyHint>
           <KeyHint k="R">reload</KeyHint>
+          <KeyHint k="S">save PNG</KeyHint>
           <button
             type="button"
             onClick={reloadAll}
@@ -229,6 +246,7 @@ export function AssetManager() {
           onToggleLoop={toggleLoop}
           onPrev={() => stepAnimation(-1)}
           onNext={() => stepAnimation(1)}
+          onScreenshot={takeScreenshot}
         />
         {detail ? (
           <AssetList

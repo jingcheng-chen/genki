@@ -7,6 +7,7 @@ interface Handlers {
   onToggleLoop: () => void
   onDelete: () => void
   onReload: () => void
+  onScreenshot: () => void
 }
 
 /**
@@ -57,6 +58,11 @@ export function useTriageHotkeys(h: Handlers) {
         case 'R':
           e.preventDefault()
           h.onReload()
+          break
+        case 's':
+        case 'S':
+          e.preventDefault()
+          h.onScreenshot()
           break
       }
     }

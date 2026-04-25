@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Environment, OrbitControls } from '@react-three/drei'
+import { setActiveScreenshotRenderer } from './screenshot'
 import {
   AnimationMixer,
   LoopOnce,
@@ -27,6 +28,7 @@ interface Props {
   onToggleLoop: () => void
   onPrev: () => void
   onNext: () => void
+  onScreenshot: () => void
 }
 
 interface PreviewState {
@@ -63,6 +65,17 @@ export function PreviewPane(props: Props) {
             shadows
             camera={{ position: [0, 1.3, 1.5], fov: 30, near: 0.1, far: 20 }}
             dpr={[1, 2]}
+            gl={{
+              alpha: true,
+              preserveDrawingBuffer: true,
+              premultipliedAlpha: false,
+              antialias: true,
+            }}
+            onCreated={({ gl }) => {
+              // Transparent background — the captured PNG keeps a clean alpha
+              // channel instead of baking in the canvas backdrop.
+              gl.setClearColor(0x000000, 0)
+            }}
           >
             <ambientLight intensity={0.6} />
             <directionalLight
@@ -84,6 +97,7 @@ export function PreviewPane(props: Props) {
                 onError={onError}
               />
             </Suspense>
+            <ScreenshotBridge />
             <OrbitControls
               target={[0, 1.0, 0]}
               enablePan
@@ -106,11 +120,13 @@ export function PreviewPane(props: Props) {
         loop={props.loop}
         time={state.time}
         duration={state.duration}
+        canScreenshot={props.vrmUrl != null}
         onTogglePlaying={props.onTogglePlaying}
         onToggleLoop={props.onToggleLoop}
         onPrev={props.onPrev}
         onNext={props.onNext}
         onScrub={setScrubTo}
+        onScreenshot={props.onScreenshot}
       />
     </section>
   )
@@ -323,4 +339,18 @@ function Empty({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   )
+}
+
+/**
+ * Tiny R3F child whose only job is to publish the active WebGLRenderer to a
+ * module singleton so the DOM-side screenshot button can reach it without
+ * prop-drilling through the Canvas boundary.
+ */
+function ScreenshotBridge() {
+  const { gl } = useThree()
+  useEffect(() => {
+    setActiveScreenshotRenderer(gl)
+    return () => setActiveScreenshotRenderer(null)
+  }, [gl])
+  return null
 }

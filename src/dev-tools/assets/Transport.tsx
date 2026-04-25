@@ -4,11 +4,13 @@ interface Props {
   loop: boolean
   time: number
   duration: number
+  canScreenshot: boolean
   onTogglePlaying: () => void
   onToggleLoop: () => void
   onPrev: () => void
   onNext: () => void
   onScrub: (seconds: number) => void
+  onScreenshot: () => void
 }
 
 export function Transport({
@@ -17,11 +19,13 @@ export function Transport({
   loop,
   time,
   duration,
+  canScreenshot,
   onTogglePlaying,
   onToggleLoop,
   onPrev,
   onNext,
   onScrub,
+  onScreenshot,
 }: Props) {
   const hasAnim = duration > 0
   const pct = hasAnim ? Math.min(100, (time / duration) * 100) : 0
@@ -64,6 +68,15 @@ export function Transport({
           }`}
         >
           loop
+        </button>
+        <button
+          type="button"
+          onClick={onScreenshot}
+          disabled={!canScreenshot}
+          title="Save current view as transparent PNG (S)"
+          className="px-2 py-1 rounded border border-[#1f2230] text-slate-300 hover:bg-[#1a1d2a] disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          save PNG
         </button>
         <div className="ml-3 text-slate-400 font-mono text-[11px] min-w-[80px]">
           {formatTime(time)} / {formatTime(duration)}
