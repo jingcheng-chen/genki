@@ -20,9 +20,16 @@ const FISH_API_BASE =
 // upstream docs (NOT a body field).
 const FISH_MODEL = 's2-pro' as const
 
+// NOTICE: Tried opus@32 first for a ~4× body-size win — the experiment
+// failed because Fish's "opus" format isn't reliably OGG-encapsulated and
+// playback was broken in the browser. mp3@128 measures ~1.2s total per
+// short chunk via curl, which is the same ballpark as ElevenLabs at our
+// chunk sizes, so the size win wasn't worth a broken pipeline.
 const DEFAULT_FORMAT = 'mp3' as const
 const DEFAULT_SAMPLE_RATE = 44100
 const DEFAULT_MP3_BITRATE = 128
+
+export const FISH_AUDIO_CONTENT_TYPE = 'audio/mpeg'
 
 export interface FishAudioVoiceSettings {
   temperature?: number
@@ -46,12 +53,18 @@ interface FishAudioRequestBody {
   format: typeof DEFAULT_FORMAT
   sample_rate: number
   mp3_bitrate: number
-  // `low` cuts ~50ms off TTFB at a small quality cost; `normal` is the
-  // safer default since first-byte from Fish is already ~100ms on S2.
+  // `low` cuts ~50ms off TTFB at a small quality cost. Worth taking — we
+  // already chunk per-sentence so any quality drop only affects boundaries
+  // the listener wouldn't notice.
   latency: 'low' | 'normal' | 'balanced'
-  // Hold within [100, 300]. Smaller chunks = lower TTFB, more boundaries
-  // (we already chunk per-sentence ourselves so the upstream rarely splits).
+  // NOTICE: chunk params are about Fish's *server-side* rechunking of our
+  // input text, not network chunks. Defaults are chunk_length=300,
+  // min_chunk_length=50 — meaning Fish may buffer until 50 chars of text
+  // before generating the first audio frame. A 1-word opener like "Hi."
+  // then waits on the buffer rather than streaming. We push these to the
+  // floor so first-byte fires the moment any text arrives.
   chunk_length: number
+  min_chunk_length: number
   temperature?: number
   top_p?: number
   prosody?: {
@@ -82,8 +95,9 @@ export async function fishAudioStream(
     format: DEFAULT_FORMAT,
     sample_rate: DEFAULT_SAMPLE_RATE,
     mp3_bitrate: DEFAULT_MP3_BITRATE,
-    latency: 'normal',
-    chunk_length: 200,
+    latency: 'low',
+    chunk_length: 100,
+    min_chunk_length: 0,
   }
 
   const vs = params.voiceSettings

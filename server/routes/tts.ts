@@ -5,7 +5,11 @@ import {
   TTS_MODEL_ID,
   TTS_OUTPUT_FORMAT,
 } from '../lib/tts'
-import { fishAudioStream, type FishAudioVoiceSettings } from '../lib/tts-fish'
+import {
+  fishAudioStream,
+  FISH_AUDIO_CONTENT_TYPE,
+  type FishAudioVoiceSettings,
+} from '../lib/tts-fish'
 
 const tts = new Hono()
 
@@ -134,13 +138,13 @@ tts.post('/', async (c) => {
         voiceId: body.voiceId,
         voiceSettings,
       })
-      // Forward the chunked binary body directly. Content-Type from upstream
-      // is audio/mpeg for our requested mp3 format; we restate it explicitly
-      // so the client doesn't depend on header passthrough.
+      // Forward the chunked binary body directly. Content-Type tracks
+      // the format selected in tts-fish.ts (Ogg-Opus today; switch to
+      // audio/mpeg if that file ever falls back to mp3).
       return new Response(upstream.body, {
         status: 200,
         headers: {
-          'Content-Type': 'audio/mpeg',
+          'Content-Type': FISH_AUDIO_CONTENT_TYPE,
           'Cache-Control': 'no-store',
         },
       })
