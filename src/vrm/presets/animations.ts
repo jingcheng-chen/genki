@@ -1,4 +1,4 @@
-import type { VRMAnimationEntry } from './types'
+import type { VRMAnimationEntry } from './types';
 
 /**
  * Shared animation roster across every character preset.
@@ -21,10 +21,10 @@ import type { VRMAnimationEntry } from './types'
  */
 
 interface AnimationTemplate {
-  id: string
-  filename: string
-  kind: VRMAnimationEntry['kind']
-  emotion?: VRMAnimationEntry['emotion']
+  id: string;
+  filename: string;
+  kind: VRMAnimationEntry['kind'];
+  emotion?: VRMAnimationEntry['emotion'];
 }
 
 // Number of extra idle clips that live on disk for every preset as
@@ -33,19 +33,16 @@ interface AnimationTemplate {
 // alongside these. Extension is `.vrm` because that's what the user
 // dropped into the folder — the VRM animation loader keys off the
 // glTF extension `VRMC_vrm_animation`, not the filename suffix.
-const IDLE_VARIANT_COUNT = 20
+const IDLE_VARIANT_COUNT = 20;
 
-const IDLE_VARIANT_TEMPLATES: AnimationTemplate[] = Array.from(
-  { length: IDLE_VARIANT_COUNT },
-  (_, i) => {
-    const n = i + 1
-    return {
-      id: `idle_${n}`,
-      filename: `idle_${n}.vrm`,
-      kind: 'idle_variant',
-    }
-  },
-)
+const IDLE_VARIANT_TEMPLATES: AnimationTemplate[] = Array.from({ length: IDLE_VARIANT_COUNT }, (_, i) => {
+  const n = i + 1;
+  return {
+    id: `idle_${n}`,
+    filename: `idle_${n}.vrma`,
+    kind: 'idle_variant',
+  };
+});
 
 const TEMPLATES: readonly AnimationTemplate[] = [
   { id: 'idle', filename: 'idle.vrma', kind: 'idle' },
@@ -92,7 +89,7 @@ const TEMPLATES: readonly AnimationTemplate[] = [
   { id: 'talking_3', filename: 'talking_3.vrma', kind: 'talking' },
   { id: 'talking_4', filename: 'talking_4.vrma', kind: 'talking' },
   { id: 'talking_5', filename: 'talking_5.vrma', kind: 'talking' },
-]
+];
 
 export interface MakeAnimationsOptions {
   /**
@@ -101,18 +98,15 @@ export interface MakeAnimationsOptions {
    * today. The gesture name never appears in the system prompt for
    * excluded ids — the LLM can't reach for what it doesn't know about.
    */
-  exclude?: readonly string[]
+  exclude?: readonly string[];
 }
 
-export function makeStandardAnimations(
-  presetId: string,
-  opts: MakeAnimationsOptions = {},
-): VRMAnimationEntry[] {
-  const exclude = new Set(opts.exclude ?? [])
+export function makeStandardAnimations(presetId: string, opts: MakeAnimationsOptions = {}): VRMAnimationEntry[] {
+  const exclude = new Set(opts.exclude ?? []);
   return TEMPLATES.filter((t) => !exclude.has(t.id)).map((t) => ({
     id: t.id,
     url: `/vrm/${presetId}/animations/${t.filename}`,
     kind: t.kind,
     ...(t.emotion ? { emotion: t.emotion } : {}),
-  }))
+  }));
 }
