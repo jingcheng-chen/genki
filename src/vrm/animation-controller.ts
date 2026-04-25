@@ -470,12 +470,26 @@ export function createAnimationController(
     }
   }
 
+  // NOTICE:
+  // The greeting and turn pipelines capture an animation-controller
+  // reference at start (`getActiveAnimationController()`) and call
+  // `animation.stop()` on abort. If the user changes outfit (or character)
+  // while a greeting/turn is in flight, the captured controller's mixer
+  // gets `dispose()`d before the abort lands — and then `stop()` →
+  // `returnToBase()` → `targetAction.play()` walks into a disposed mixer
+  // cache and three.js throws "Cannot set properties of undefined
+  // (setting '_cacheIndex')". A `disposed` flag on every public method
+  // makes the controller safe to call after dispose; pipelines holding
+  // stale references just get silent no-ops.
+  let disposed = false
+
   return {
     getGestureIds: () => [...gestureIds],
 
     getBoundEmotions: () => [...byEmotion.keys()],
 
     play(id) {
+      if (disposed) return false
       const p = byId.get(id)
       if (!p || p.entry.kind !== 'gesture') return false
       startOverlay(p)
@@ -483,6 +497,7 @@ export function createAnimationController(
     },
 
     triggerEmotion(emotion) {
+      if (disposed) return false
       const p = byEmotion.get(emotion)
       if (!p) return false
       startOverlay(p)
@@ -490,14 +505,22 @@ export function createAnimationController(
     },
 
     stop() {
+      if (disposed) return
       returnToBase()
     },
 
-    startSpeaking,
+    startSpeaking() {
+      if (disposed) return
+      startSpeaking()
+    },
 
-    stopSpeaking,
+    stopSpeaking() {
+      if (disposed) return
+      stopSpeaking()
+    },
 
     update(delta) {
+      if (disposed) return
       elapsed += delta * 1000
       mixer.update(delta)
       if (fadeBackAt !== null && elapsed >= fadeBackAt) {
@@ -506,6 +529,8 @@ export function createAnimationController(
     },
 
     dispose() {
+      if (disposed) return
+      disposed = true
       mixer.stopAllAction()
       for (const { clip } of byId.values()) mixer.uncacheClip(clip)
       mixer.uncacheRoot(vrm.scene)

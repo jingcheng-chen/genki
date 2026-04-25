@@ -60,11 +60,17 @@ export function CharacterPicker() {
           </div>
 
           {active.models.length > 1 && (
-            <div className="mt-1 flex flex-col gap-1">
+            <div className="mt-1 flex flex-col gap-1.5">
               <span className="text-[10px] uppercase tracking-wider opacity-60">
                 Outfit — {active.name}
               </span>
-              <div className="flex flex-wrap gap-1.5">
+              <OutfitPreview
+                variant={
+                  active.models.find((m) => m.id === activeModelId) ??
+                  active.models[0]
+                }
+              />
+              <div className="flex gap-1.5">
                 {active.models.map((m) => (
                   <OutfitTile
                     key={m.id}
@@ -103,6 +109,33 @@ export function CharacterPicker() {
   )
 }
 
+/**
+ * Large display of the currently-selected outfit. Anchors the picker
+ * visually so the user can read the outfit at a glance instead of
+ * squinting at the thumbnail strip.
+ */
+function OutfitPreview({ variant }: { variant: VRMModelVariant }) {
+  return (
+    <div className="relative aspect-[3/4] w-full overflow-hidden rounded ring-1 ring-zinc-700">
+      <img
+        src={variant.previewUrl}
+        alt={variant.label}
+        className="h-full w-full object-cover"
+      />
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
+        <div className="text-xs font-semibold text-zinc-100">
+          {variant.label}
+        </div>
+        {variant.description && (
+          <div className="text-[10px] leading-snug text-zinc-300">
+            {variant.description}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function OutfitTile({
   variant,
   active,
@@ -117,10 +150,10 @@ function OutfitTile({
       onClick={onSelect}
       title={variant.description ?? variant.label}
       className={[
-        'group relative h-16 w-12 overflow-hidden rounded transition-all',
+        'group relative aspect-[3/4] flex-1 min-w-0 overflow-hidden rounded transition-all',
         active
           ? 'ring-2 ring-cyan-400'
-          : 'opacity-70 ring-1 ring-zinc-700 hover:opacity-100',
+          : 'opacity-60 ring-1 ring-zinc-700 hover:opacity-100',
       ].join(' ')}
     >
       <img
@@ -129,14 +162,6 @@ function OutfitTile({
         className="h-full w-full object-cover"
         loading="lazy"
       />
-      <span
-        className={[
-          'absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-center text-[9px]',
-          active ? 'text-cyan-200' : 'text-zinc-100',
-        ].join(' ')}
-      >
-        {variant.label}
-      </span>
     </button>
   )
 }
