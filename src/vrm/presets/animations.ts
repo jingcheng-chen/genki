@@ -20,7 +20,7 @@ import type { VRMAnimationEntry } from './types';
  * the LLM's `<|PLAY:…|>` markers, so short + stable wins.
  */
 
-interface AnimationTemplate {
+export interface AnimationTemplate {
   id: string;
   filename: string;
   kind: VRMAnimationEntry['kind'];
@@ -44,7 +44,7 @@ const IDLE_VARIANT_TEMPLATES: AnimationTemplate[] = Array.from({ length: IDLE_VA
   };
 });
 
-const TEMPLATES: readonly AnimationTemplate[] = [
+export const STANDARD_ANIMATION_TEMPLATES: readonly AnimationTemplate[] = [
   { id: 'idle', filename: 'idle.vrma', kind: 'idle' },
   ...IDLE_VARIANT_TEMPLATES,
 
@@ -103,7 +103,7 @@ export interface MakeAnimationsOptions {
 
 export function makeStandardAnimations(presetId: string, opts: MakeAnimationsOptions = {}): VRMAnimationEntry[] {
   const exclude = new Set(opts.exclude ?? []);
-  return TEMPLATES.filter((t) => !exclude.has(t.id)).map((t) => ({
+  return STANDARD_ANIMATION_TEMPLATES.filter((t) => !exclude.has(t.id)).map((t) => ({
     id: t.id,
     url: `/vrm/${presetId}/animations/${t.filename}`,
     kind: t.kind,

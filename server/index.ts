@@ -6,6 +6,7 @@ import { tts } from './routes/tts'
 import { chat } from './routes/chat'
 import { stt } from './routes/stt'
 import { memory } from './routes/memory'
+import { devAssets } from './routes/dev-assets'
 
 const app = new Hono()
 
@@ -24,6 +25,12 @@ app.route('/api/tts', tts)
 app.route('/api/chat', chat)
 app.route('/api/stt', stt)
 app.route('/api/memory', memory)
+
+// Dev-only asset manager API. The route file has no top-level side effects,
+// so importing it in production is harmless; we just decline to mount it.
+if (process.env.NODE_ENV !== 'production') {
+  app.route('/api/dev/assets', devAssets)
+}
 
 const port = Number(process.env.PORT ?? 8787)
 
