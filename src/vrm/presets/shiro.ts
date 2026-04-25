@@ -106,10 +106,7 @@ const STARTERS: Record<import('./types').Lang, string[]> = {
     "Eh?! Oh, sorry, I didn't hear you come in. I'm Shiro. Please — make yourself comfortable.",
     "Hello. Um, I'm Shiro. I was just tidying up. Would you like some tea?",
   ],
-  'zh-CN': [
-    '啊！嗯……你好。我叫 Shiro，很高兴见到你。',
-    '欸？！啊，对不起，我没听见你进来。我是 Shiro，请随意坐。',
-  ],
+  'zh-CN': ['啊！嗯……你好。我叫 Shiro，很高兴见到你。', '欸？！啊，对不起，我没听见你进来。我是 Shiro，请随意坐。'],
 };
 const RETURNERS: Record<import('./types').Lang, string[]> = {
   'en-US': [
@@ -117,16 +114,15 @@ const RETURNERS: Record<import('./types').Lang, string[]> = {
     "Eh — welcome back. I made some rice balls earlier. If you're hungry…",
     'You came back. That makes me really happy. Come, come sit down.',
   ],
-  'zh-CN': [
-    '啊！你回来了。我好开心。我刚刚还在想你呢。',
-    '欸——欢迎回来。我刚做了饭团，如果你饿了的话……',
-  ],
+  'zh-CN': ['啊！你回来了。我好开心。我刚刚还在想你呢。', '欸——欢迎回来。我刚做了饭团，如果你饿了的话……'],
 };
 
 // ElevenLabs — "Matilda" (warm, young American female). Picked to match
 // Shiro's gentle, slightly-formal cadence. If the read feels off, any
 // soft mid-range female voice should work — Lily, Jessica, Elli.
 const VOICE_ID = 'ngvNHfiCrXLPAHcTrZK1';
+// Fish Audio S2-Pro reference id. Used when TTS_PROVIDER=fish-audio (default).
+const FISH_AUDIO_VOICE_ID = '0089dce5fefb4c6ba9b9f2f0debe1ddc';
 
 export const shiro: VRMPreset = {
   id: 'shiro',
@@ -171,6 +167,16 @@ export const shiro: VRMPreset = {
     style: 0.3,
     useSpeakerBoost: true,
     speed: 2,
+  },
+  fishAudioVoiceId: FISH_AUDIO_VOICE_ID,
+  // Shiro reads soft and slightly hesitant. Mid temperature keeps the
+  // stammers natural without sliding into mush; speed pulled fractionally
+  // back matches her polite cadence.
+  fishAudioVoiceSettings: {
+    temperature: 0.7,
+    topP: 0.75,
+    speed: 0.95,
+    normalizeLoudness: true,
   },
   persona: PERSONA,
   defaultLanguage: 'en-US',

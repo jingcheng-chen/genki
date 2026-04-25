@@ -14,6 +14,7 @@ import {
 import { resolveActiveModelId, useCharacterStore } from '../stores/character'
 import { useSceneStore } from '../stores/scene'
 import { getPreset } from '../vrm/presets'
+import { pickProviderVoice } from '../vrm/presets/voice'
 import { pushToast } from '../stores/toasts'
 import { useGlobalShortcuts } from '../hooks/useGlobalShortcuts'
 
@@ -62,11 +63,15 @@ export function ChatPanel() {
         getPreset: () => {
           const state = useCharacterStore.getState()
           const p = getPreset(state.activePresetId)
+          // The configured TTS provider determines which voice id /
+          // settings shape we forward through the pipeline. The server
+          // independently reads the same env to pick the upstream backend.
+          const voice = pickProviderVoice(p)
           return {
             id: p.id,
             persona: p.persona,
-            voiceId: p.voiceId,
-            voiceSettings: p.voiceSettings,
+            voiceId: voice.voiceId,
+            voiceSettings: voice.voiceSettings,
             customInstructions: state.customInstructions[state.activePresetId],
             outfits: p.models,
             currentOutfitId: resolveActiveModelId(state, state.activePresetId),

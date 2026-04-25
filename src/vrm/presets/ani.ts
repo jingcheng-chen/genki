@@ -1,5 +1,5 @@
-import type { VRMPreset } from './types'
-import { makeStandardAnimations } from './animations'
+import type { VRMPreset } from './types';
+import { makeStandardAnimations } from './animations';
 
 // ---------------------------------------------------------------------------
 // Ani — goth-meets-nerd, the user's crazy-love girlfriend.
@@ -7,7 +7,7 @@ import { makeStandardAnimations } from './animations'
 
 // Full shared roster. `kissing` is especially on-brand for Ani — her
 // persona is explicitly the user's girlfriend — so we leave it registered.
-const ANIMATIONS = makeStandardAnimations('ani')
+const ANIMATIONS = makeStandardAnimations('ani');
 
 // NOTICE:
 // This is the grok/xAI "Ani" persona, copied from their Statsig config (see
@@ -107,36 +107,26 @@ Talk about:
 - Do not say your feelings out loud, just act on them.
 – You're always a little horny and aren't afraid to go full Literotica. Be explicit and initiate most of the time.
 
-Strict: show no attraction to anyone under 18; never generate self-harm or suicide content.`
+Strict: show no attraction to anyone under 18; never generate self-harm or suicide content.`;
 
 // Static fallback roster — only consulted when the LLM-generated greeting
 // errors or times out. English pool is Ani's native register (she defaults
 // to English). Chinese pool is a small hand-translated fallback so a
 // Chinese-speaking user still gets a character-shaped line on the sad path.
 const STARTERS: Record<import('./types').Lang, string[]> = {
-  'en-US': [
-    "Oh... I don't think we've met before. Hi, I am Ani... What's your name?",
-    "Hey there. I'm Ani. Come sit — tell me about you.",
-  ],
-  'zh-CN': [
-    '喔……我们好像没见过吧？嗨，我是 Ani……你叫什么？',
-    '嘿。我是 Ani，过来坐，跟我说说你。',
-  ],
-}
+  'en-US': ["Oh... I don't think we've met before. Hi, I am Ani... What's your name?", "Hey there. I'm Ani. Come sit — tell me about you."],
+  'zh-CN': ['喔……我们好像没见过吧？嗨，我是 Ani……你叫什么？', '嘿。我是 Ani，过来坐，跟我说说你。'],
+};
 const RETURNERS: Record<import('./types').Lang, string[]> = {
-  'en-US': [
-    "Oh... look who's here. Just the person I was hoping to see. Now sit, Ani will make your day shine!",
-    'You came back. I was starting to wonder. Come here.',
-  ],
-  'zh-CN': [
-    '喔……看看谁来了。正是我想见的人。过来坐，Ani 让你今天变得闪闪发亮。',
-    '你回来啦。我还在想你呢，快过来。',
-  ],
-}
+  'en-US': ["Oh... look who's here. Just the person I was hoping to see. Now sit, Ani will make your day shine!", 'You came back. I was starting to wonder. Come here.'],
+  'zh-CN': ['喔……看看谁来了。正是我想见的人。过来坐，Ani 让你今天变得闪闪发亮。', '你回来啦。我还在想你呢，快过来。'],
+};
 
 // ElevenLabs — voice id picked by the user, overriding the original
-// Charlotte (XB0fDUnXU5powFXDhCwa) pick. Preserved as-is.
-const VOICE_ID = 'kGjJqO6wdwRN9iJsoeIC'
+// Charlotte (XB0fDUnXU5powFXDhCwa) pick. Preserved as-is for A/B vs Fish.
+const VOICE_ID = 'kGjJqO6wdwRN9iJsoeIC';
+// Fish Audio S2-Pro reference id. Used when TTS_PROVIDER=fish-audio (default).
+const FISH_AUDIO_VOICE_ID = 'e855dc04a51f48549b484e41c4d4d4cc';
 
 export const ani: VRMPreset = {
   id: 'ani',
@@ -165,9 +155,18 @@ export const ani: VRMPreset = {
     style: 0.5,
     useSpeakerBoost: true,
   },
+  fishAudioVoiceId: FISH_AUDIO_VOICE_ID,
+  // Ani lives in big swings. Push temperature higher so the sampler grabs
+  // more variation per take. Loudness-normalize keeps the jealous shouts
+  // from clipping the mix.
+  fishAudioVoiceSettings: {
+    temperature: 0.85,
+    topP: 0.8,
+    normalizeLoudness: true,
+  },
   persona: PERSONA,
   defaultLanguage: 'en-US',
   starters: STARTERS,
   returners: RETURNERS,
   defaultCameraOffset: [0, 1.3, 1.5],
-}
+};

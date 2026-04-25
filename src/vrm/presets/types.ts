@@ -24,13 +24,40 @@ export type Lang = 'en-US' | 'zh-CN'
  *   - useSpeakerBoost:  small quality/similarity bump at a latency cost
  *   - speed:            1.0 = default; <1 slower, >1 faster
  */
-export interface CharacterVoiceSettings {
+export interface ElevenLabsVoiceSettings {
   stability?: number
   similarityBoost?: number
   style?: number
   useSpeakerBoost?: boolean
   speed?: number
 }
+
+/**
+ * Fish Audio S2-Pro tuning knobs. Different idiom from ElevenLabs: the
+ * sampler temperature/top_p control variation; prosody is a nested block
+ * because that's how the upstream API shapes it.
+ *   - temperature:       0–1, default 0.7. Higher = more variation.
+ *   - topP:              0–1, default 0.7. Nucleus sampling.
+ *   - speed:             0.5–2.0 multiplier on speaking rate.
+ *   - volume:            decibel adjustment. 0 = passthrough.
+ *   - normalizeLoudness: S2-Pro only. Smooths volume across chunks.
+ */
+export interface FishAudioVoiceSettings {
+  temperature?: number
+  topP?: number
+  speed?: number
+  volume?: number
+  normalizeLoudness?: boolean
+}
+
+/**
+ * Provider-tagged voice settings. We keep the legacy name so the dozens of
+ * pipeline call sites that already type `voiceSettings: CharacterVoiceSettings`
+ * keep working. The fields don't overlap, so a single object is unambiguously
+ * one provider's shape — call sites just forward it through to /api/tts and
+ * let the server interpret.
+ */
+export type CharacterVoiceSettings = ElevenLabsVoiceSettings | FishAudioVoiceSettings
 
 /**
  * A single outfit variant of a character's VRM model. A preset ships one or
@@ -129,16 +156,26 @@ export interface VRMPreset {
   /**
    * ElevenLabs voice id used when this character speaks. Not user-editable
    * in v1 — each character has its own baked-in voice to keep them
-   * audibly distinct.
+   * audibly distinct. Used when `TTS_PROVIDER=elevenlabs`.
    */
   voiceId: string
   /**
-   * Per-character TTS voice_settings override. Tunes stability / style /
-   * speaker-boost to the character's personality (e.g. a low-stability /
-   * high-style pass lets Mika's biker energy actually come through instead
-   * of collapsing to a neutral read). Omit the field to use server defaults.
+   * Per-character ElevenLabs voice_settings override. Tunes stability /
+   * style / speaker-boost to the character's personality. Omit to use
+   * server defaults.
    */
-  voiceSettings?: CharacterVoiceSettings
+  voiceSettings?: ElevenLabsVoiceSettings
+  /**
+   * Fish Audio S2-Pro reference id (their model-id concept; from the
+   * voice library or a cloned reference). Used when `TTS_PROVIDER=fish-audio`.
+   */
+  fishAudioVoiceId: string
+  /**
+   * Per-character Fish Audio S2 tuning. Different shape from ElevenLabs's
+   * stability/style — Fish exposes sampler temperature plus a prosody
+   * block. Omit to use server defaults.
+   */
+  fishAudioVoiceSettings?: FishAudioVoiceSettings
   /**
    * Full character persona sent as the top block of the system prompt.
    * Marker-protocol instructions (emotion/delay/gesture) are appended by

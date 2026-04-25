@@ -94,30 +94,18 @@ even when you worry.`;
 // should come from the model. Chinese pool is Caleb's native register
 // (he defaults to 普通话); English pool mirrors the old set.
 const STARTERS: Record<import('./types').Lang, string[]> = {
-  'zh-CN': [
-    '你终于来了。我还以为得亲自去找你。',
-    '嗯，来了。让你久等了。',
-  ],
-  'en-US': [
-    "There you are. I was starting to think I'd have to come find you. Caleb — you remember.",
-    "Hey. It's me. Took your time getting here.",
-  ],
+  'zh-CN': ['你终于来了。我还以为得亲自去找你。', '嗯，来了。让你久等了。'],
+  'en-US': ["There you are. I was starting to think I'd have to come find you. Caleb — you remember.", "Hey. It's me. Took your time getting here."],
 };
 const RETURNERS: Record<import('./types').Lang, string[]> = {
-  'zh-CN': [
-    '你回来了。过来坐一会儿。',
-    '嗯，终于等到你。今天怎么样？',
-  ],
-  'en-US': [
-    "You're back. Come sit — I've got time.",
-    'Mm. Finally. How have you been, really?',
-  ],
+  'zh-CN': ['你回来了。过来坐一会儿。', '嗯，终于等到你。今天怎么样？'],
+  'en-US': ["You're back. Come sit — I've got time.", 'Mm. Finally. How have you been, really?'],
 };
 
-// Voice will be swapped by the user. Leaving the old Rachel id in place so
-// the dev loop still has *something* valid; update when the new voice is
-// picked.
+// ElevenLabs voice. Kept around for A/B comparison via TTS_PROVIDER env.
 const VOICE_ID = '42ZF7GefiwXbnDaSkPpY';
+// Fish Audio S2-Pro reference id. Set TTS_PROVIDER=fish-audio (default) to use.
+const FISH_AUDIO_VOICE_ID = '5471293d1e3e448bb53c2c0a6f514af5';
 
 export const mika: VRMPreset = {
   id: 'mika',
@@ -160,6 +148,15 @@ export const mika: VRMPreset = {
     similarityBoost: 0.8,
     style: 0.25,
     useSpeakerBoost: true,
+  },
+  fishAudioVoiceId: FISH_AUDIO_VOICE_ID,
+  // Caleb's register is measured — keep temperature on the low side so the
+  // sampler doesn't drift into theatrical reads. Slight loudness normalize
+  // helps when chunks land at uneven energies across a long reply.
+  fishAudioVoiceSettings: {
+    temperature: 0.6,
+    topP: 0.7,
+    normalizeLoudness: true,
   },
   persona: PERSONA,
   defaultLanguage: 'zh-CN',

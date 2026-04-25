@@ -18,6 +18,8 @@ app.get('/api/health', (c) =>
     time: new Date().toISOString(),
     hasXaiKey: Boolean(process.env.XAI_API_KEY),
     hasElevenLabsKey: Boolean(process.env.ELEVENLABS_API_KEY),
+    hasFishAudioKey: Boolean(process.env.FISH_AUDIO_API_KEY),
+    ttsProvider: (process.env.VITE_TTS_PROVIDER ?? process.env.TTS_PROVIDER ?? 'fish-audio').toLowerCase(),
   }),
 )
 
