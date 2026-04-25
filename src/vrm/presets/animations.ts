@@ -27,8 +27,29 @@ interface AnimationTemplate {
   emotion?: VRMAnimationEntry['emotion']
 }
 
+// Number of extra idle clips that live on disk for every preset as
+// `/public/vrm/<preset>/animations/idle_<N>.vrm`. The canonical idle
+// (`idle.vrma`) stays as the "default" and joins the random rotation
+// alongside these. Extension is `.vrm` because that's what the user
+// dropped into the folder — the VRM animation loader keys off the
+// glTF extension `VRMC_vrm_animation`, not the filename suffix.
+const IDLE_VARIANT_COUNT = 20
+
+const IDLE_VARIANT_TEMPLATES: AnimationTemplate[] = Array.from(
+  { length: IDLE_VARIANT_COUNT },
+  (_, i) => {
+    const n = i + 1
+    return {
+      id: `idle_${n}`,
+      filename: `idle_${n}.vrm`,
+      kind: 'idle_variant',
+    }
+  },
+)
+
 const TEMPLATES: readonly AnimationTemplate[] = [
   { id: 'idle', filename: 'idle.vrma', kind: 'idle' },
+  ...IDLE_VARIANT_TEMPLATES,
 
   // Emotion clips — `blush` is the warmest of the set; bound to `happy`
   // so an <|ACT:happy|> from the LLM fires the body pose too.

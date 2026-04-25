@@ -52,24 +52,33 @@ export interface VRMModelVariant {
 /**
  * One animation clip in a preset's library.
  *
- *  - 'idle'    — loops forever; exactly one per preset; the default base layer
- *  - 'emotion' — paired with an `<|ACT:{"emotion":…}|>` marker from the
- *                LLM; plays for `holdSeconds` (default 3s) then fades back
- *                to the current base. `emotion` must be one of the 6 VRM
- *                primaries.
- *  - 'gesture' — triggered by `<|PLAY:id|>`; plays once then fades back to
- *                the current base
- *  - 'talking' — speaking-idle variants. Invisible to the LLM. The
- *                animation controller randomly picks one while the turn
- *                controller is in the 'speaking' state and chains the
- *                next variant whenever the current clip finishes, until
- *                speaking ends. A preset with zero 'talking' clips simply
- *                stays on the regular idle during speech.
+ *  - 'idle'         — exactly one per preset; the "default" idle clip.
+ *                     If no `idle_variant` clips are declared, it loops
+ *                     forever as the base layer (legacy behaviour). If
+ *                     variants are declared, it joins them in a random
+ *                     chain — each clip plays once and the controller
+ *                     picks the next one on `finished`.
+ *  - 'idle_variant' — extra idle clips that participate in the random
+ *                     idle chain alongside the default. Invisible to the
+ *                     LLM. Zero or more per preset.
+ *  - 'emotion'      — paired with an `<|ACT:{"emotion":…}|>` marker from
+ *                     the LLM; plays for `holdSeconds` (default 3s) then
+ *                     fades back to the current base. `emotion` must be
+ *                     one of the 6 VRM primaries.
+ *  - 'gesture'      — triggered by `<|PLAY:id|>`; plays once then fades
+ *                     back to the current base.
+ *  - 'talking'      — speaking-idle variants. Invisible to the LLM. The
+ *                     animation controller randomly picks one while the
+ *                     turn controller is in the 'speaking' state and
+ *                     chains the next variant whenever the current clip
+ *                     finishes, until speaking ends. A preset with zero
+ *                     'talking' clips simply stays on the regular idle
+ *                     during speech.
  */
 export interface VRMAnimationEntry {
   id: string
   url: string
-  kind: 'idle' | 'emotion' | 'gesture' | 'talking'
+  kind: 'idle' | 'idle_variant' | 'emotion' | 'gesture' | 'talking'
   /**
    * For `kind === 'emotion'`: bind this clip to an ACT emotion primary.
    * Opt-in — emotion clips without a binding can still be played directly

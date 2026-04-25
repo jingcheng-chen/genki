@@ -50,6 +50,12 @@ const TALKING_FADE_OUT = 0.7
 // handover snaps instead of blending.
 const OVERLAY_RETURN_TO_TALKING_FADE = 0.6
 
+// Idle chain crossfades. Idle-variant clips are similar in energy (no big
+// arm swings), so we can get away with slightly shorter blends than
+// talking. Still longer than DEFAULT_CROSSFADE because two different idle
+// clips can have different hip sway and a fast blend reads as a "jerk".
+const IDLE_FADE_CHAIN = 0.6
+
 interface PreparedEntry {
   entry: VRMAnimationEntry
   clip: AnimationClip
@@ -102,6 +108,7 @@ export function createAnimationController(
   const byEmotion = new Map<string, PreparedEntry>()
   const gestureIds: string[] = []
   const talkingEntries: PreparedEntry[] = []
+  const idleEntries: PreparedEntry[] = []
 
   let idleEntry: PreparedEntry | null = null
 
@@ -116,9 +123,11 @@ export function createAnimationController(
     if (entry.kind === 'idle') {
       if (idleEntry) throw new Error('[animation-controller] multiple idle entries')
       idleEntry = prepared
-      action.setLoop(LoopRepeat, Infinity)
-      action.weight = 1
-      action.play()
+      idleEntries.push(prepared)
+      // Loop mode decided below once we know whether variants exist.
+    } else if (entry.kind === 'idle_variant') {
+      idleEntries.push(prepared)
+      // Loop mode decided below.
     } else if (entry.kind === 'emotion') {
       action.setLoop(LoopRepeat, Infinity)
       if (entry.emotion) byEmotion.set(entry.emotion, prepared)
@@ -137,6 +146,26 @@ export function createAnimationController(
 
   if (!idleEntry) throw new Error('[animation-controller] no idle entry declared')
 
+  // Idle setup:
+  //   - Single idle (no variants): keep legacy behaviour — LoopRepeat
+  //     forever, the idle clip is the permanent base layer.
+  //   - Multiple (default + variants): LoopOnce + clampWhenFinished on
+  //     every idle. The 'finished' handler chains into a fresh random
+  //     pick via chainIdle(). The default idle is the starting clip.
+  const hasIdleChain = idleEntries.length > 1
+  if (hasIdleChain) {
+    for (const { action } of idleEntries) {
+      action.setLoop(LoopOnce, 1)
+      action.clampWhenFinished = true
+    }
+    idleEntry.action.weight = 1
+    idleEntry.action.play()
+  } else {
+    idleEntry.action.setLoop(LoopRepeat, Infinity)
+    idleEntry.action.weight = 1
+    idleEntry.action.play()
+  }
+
   // Current overlay state — what's on top of the base right now.
   let overlay: PreparedEntry | null = null
   let elapsed = 0
@@ -144,7 +173,8 @@ export function createAnimationController(
 
   // Talking base state. While speaking, the "base" conceptually shifts from
   // idle to one of these clips — driven by `currentTalkingEntry`. When
-  // `currentTalkingEntry === null` the base is the idle clip.
+  // `currentTalkingEntry === null` the base is the idle chain (or the
+  // single idle clip if no variants exist).
   let speakingActive = false
   let currentTalkingEntry: PreparedEntry | null = null
   let lastTalkingId: string | null = null
@@ -154,13 +184,22 @@ export function createAnimationController(
   // and pick a fresh talking clip then — see returnToBase().
   let talkingFinishedDuringOverlay = false
 
+  // Idle chain state. When `hasIdleChain` is true, the base is whichever
+  // idle clip is currently playing — starts as the default, then rotates
+  // through variants as each clip finishes. Single-idle presets keep
+  // `currentIdleEntry === idleEntry` forever.
+  let currentIdleEntry: PreparedEntry = idleEntry
+  let lastIdleId: string | null = hasIdleChain ? idleEntry.entry.id : null
+  // Mirror of talkingFinishedDuringOverlay for the idle chain.
+  let idleFinishedDuringOverlay = false
+
   const crossfadeOf = (e: VRMAnimationEntry) => e.crossfade ?? DEFAULT_CROSSFADE
   const holdOf = (e: VRMAnimationEntry) =>
     (e.holdSeconds ?? DEFAULT_HOLD_SECONDS) * 1000
 
   /** The action the overlay would fade back to right now. */
   function getCurrentBaseAction(): AnimationAction {
-    return currentTalkingEntry?.action ?? idleEntry!.action
+    return currentTalkingEntry?.action ?? currentIdleEntry.action
   }
 
   function startOverlay(next: PreparedEntry) {
@@ -240,9 +279,24 @@ export function createAnimationController(
       targetAction.enabled = true
       targetAction.play()
       fade = OVERLAY_RETURN_TO_TALKING_FADE
+    } else if (hasIdleChain && idleFinishedDuringOverlay) {
+      // (c1) not speaking, the idle clip finished under the overlay.
+      // Pick a fresh idle variant and start it — same pattern as (a).
+      idleFinishedDuringOverlay = false
+      const chosen = pickRandomIdle()
+      targetAction = chosen.action
+      targetAction.reset()
+      targetAction.setLoop(LoopOnce, 1)
+      targetAction.clampWhenFinished = true
+      targetAction.enabled = true
+      targetAction.play()
+      currentIdleEntry = chosen
+      lastIdleId = chosen.entry.id
+      fade = IDLE_FADE_CHAIN
     } else {
-      // (c)
-      targetAction = idleEntry!.action
+      // (c2) not speaking, resume the idle that was playing when the
+      // overlay started. Single-idle presets hit this branch as well.
+      targetAction = currentIdleEntry.action
       targetAction.enabled = true
       targetAction.play()
       fade = crossfadeOf(overlay.entry)
@@ -254,6 +308,35 @@ export function createAnimationController(
 
     overlay = null
     fadeBackAt = null
+  }
+
+  // -------------------------------------------------------------------------
+  // Idle chain
+  // -------------------------------------------------------------------------
+
+  function pickRandomIdle(): PreparedEntry {
+    // Exclude the last-played id so the same clip never fires twice in a
+    // row. Falls back to the full pool for single-entry presets (though
+    // in practice the chain is only active when idleEntries.length > 1).
+    const candidates = idleEntries.filter((e) => e.entry.id !== lastIdleId)
+    const pool = candidates.length > 0 ? candidates : idleEntries
+    return pool[Math.floor(Math.random() * pool.length)]
+  }
+
+  function chainIdle() {
+    // Precondition: hasIdleChain, !speakingActive, !overlay.
+    if (!hasIdleChain) return
+    const prev = currentIdleEntry
+    const next = pickRandomIdle()
+    next.action.reset()
+    next.action.setLoop(LoopOnce, 1)
+    next.action.clampWhenFinished = true
+    next.action.enabled = true
+    next.action.setEffectiveWeight(1)
+    next.action.play()
+    next.action.crossFadeFrom(prev.action, IDLE_FADE_CHAIN, true)
+    currentIdleEntry = next
+    lastIdleId = next.entry.id
   }
 
   // -------------------------------------------------------------------------
@@ -306,27 +389,46 @@ export function createAnimationController(
     })
   }
 
-  // Global 'finished' listener on the mixer. Fires for every LoopOnce action
-  // that completes — we filter to just the current talking clip.
+  // Global 'finished' listener on the mixer. Fires for every LoopOnce
+  // action that completes — we filter to just the clip currently acting
+  // as the base layer (talking variant while speaking, idle variant when
+  // not). Gestures and emotion bodies also fire 'finished', but we let
+  // the overlay's scheduled `fadeBackAt` drive their handoff rather than
+  // reacting here; if we crossfaded inside this handler, the overlay and
+  // the base would briefly fight for weight.
   mixer.addEventListener('finished', (e: { action: AnimationAction }) => {
-    if (!speakingActive || !currentTalkingEntry) return
-    if (e.action !== currentTalkingEntry.action) return
-    if (overlay) {
-      // Can't chain with an overlay in the way — defer until the overlay ends.
-      talkingFinishedDuringOverlay = true
-    } else {
-      chainTalking()
+    if (speakingActive && currentTalkingEntry && e.action === currentTalkingEntry.action) {
+      if (overlay) {
+        // Can't chain with an overlay in the way — defer until it ends.
+        talkingFinishedDuringOverlay = true
+      } else {
+        chainTalking()
+      }
+      return
+    }
+    if (!speakingActive && hasIdleChain && e.action === currentIdleEntry.action) {
+      if (overlay) {
+        idleFinishedDuringOverlay = true
+      } else {
+        chainIdle()
+      }
     }
   })
 
   function startSpeaking() {
     if (speakingActive) return
     speakingActive = true
+    // Reset any pending idle-chain tick — we're about to blow past the
+    // idle layer with a talking clip. The current idle clip is left
+    // paused-in-place; `finished` events for it no longer chain because
+    // `speakingActive === true` gates the idle branch of the handler.
+    idleFinishedDuringOverlay = false
     if (talkingEntries.length === 0) return
-    // Engage the first talking clip. If an overlay is currently active the
-    // engagement is silent; otherwise we visibly crossfade from idle.
+    // Engage the first talking clip. If an overlay is currently active
+    // the engagement is silent; otherwise we visibly crossfade from the
+    // current idle (default or variant).
     engageTalkingClip(pickRandomTalking(), {
-      fromAction: idleEntry!.action,
+      fromAction: currentIdleEntry.action,
       fade: TALKING_FADE_IN,
     })
   }
@@ -339,20 +441,32 @@ export function createAnimationController(
     currentTalkingEntry = null
     if (!prev) return
 
-    const idle = idleEntry!.action
-    idle.enabled = true
-    idle.play()
+    // Pick a fresh idle to land on — so the post-speech pose varies
+    // instead of always snapping back to the same default clip. For
+    // single-idle presets this returns `idleEntry` unchanged.
+    const chosen = hasIdleChain ? pickRandomIdle() : idleEntry!
+    const idleAction = chosen.action
+    idleAction.reset()
+    if (hasIdleChain) {
+      idleAction.setLoop(LoopOnce, 1)
+      idleAction.clampWhenFinished = true
+    }
+    idleAction.enabled = true
+    currentIdleEntry = chosen
+    lastIdleId = chosen.entry.id
 
     if (overlay) {
-      // Silent — overlay is foreground. Prep idle at weight 0 so when the
-      // overlay ends returnToBase() crossfades into it. Make sure the
-      // now-stale talking clip isn't contributing weight behind the overlay
-      // (it was at 0 already, but be explicit).
-      idle.setEffectiveWeight(0)
+      // Silent — overlay is foreground. Prep idle at weight 0 so when
+      // the overlay ends returnToBase() crossfades into it. Make sure
+      // the now-stale talking clip isn't contributing weight behind the
+      // overlay (it was at 0 already, but be explicit).
+      idleAction.setEffectiveWeight(0)
+      idleAction.play()
       prev.action.setEffectiveWeight(0)
     } else {
-      idle.setEffectiveWeight(1)
-      idle.crossFadeFrom(prev.action, TALKING_FADE_OUT, true)
+      idleAction.setEffectiveWeight(1)
+      idleAction.play()
+      idleAction.crossFadeFrom(prev.action, TALKING_FADE_OUT, true)
     }
   }
 
