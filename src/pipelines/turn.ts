@@ -11,7 +11,10 @@ import { getExpressionController } from '../vrm/expression-controller'
 import { getActiveAnimationController } from '../vrm/animation-controller'
 import { resolveEmotion } from '../vrm/emotion-vocab'
 import { tracer } from '../observability/tracer'
-import type { CharacterVoiceSettings } from '../vrm/presets/types'
+import type {
+  CharacterVoiceSettings,
+  VRMModelVariant,
+} from '../vrm/presets/types'
 
 export interface TurnHandle {
   /** Resolves when LLM + TTS + playback all complete. */
@@ -42,6 +45,16 @@ export interface RunTurnOptions {
   /** Per-character v3 voice_settings override (stability / style / …). */
   voiceSettings?: CharacterVoiceSettings
   /**
+   * Outfit variants registered on the active preset. Used both to inject
+   * the OUTFIT marker block into the system prompt AND to whitelist
+   * `<|OUTFIT:id|>` markers — unknown ids are dropped silently.
+   */
+  outfits?: readonly VRMModelVariant[]
+  /** Currently-worn outfit id (for the system prompt's "currently wearing"
+   *  hint). When omitted the prompt simply lists all variants without a
+   *  "currently wearing" marker. */
+  currentOutfitId?: string
+  /**
    * Non-user-initiated turn trigger. When set, the system prompt gains a
    * small directive describing the reason (e.g. silence-break). Memory
    * extraction callers typically skip for proactive turns because there is
@@ -61,6 +74,9 @@ export interface RunTurnOptions {
   onEmotion?: (emotion: string, intensity: number) => void
   /** Called with parsed gesture (PLAY) markers. */
   onGesture?: (id: string) => void
+  /** Called with parsed outfit (OUTFIT) markers, after the id has been
+   *  validated against the `outfits` whitelist. */
+  onOutfit?: (id: string) => void
   /** Called when the LLM stream finishes (before playback finishes). */
   onStreamEnd?: () => void
   /** Called after the stream ends with the full-turn payload the extractor
@@ -176,6 +192,19 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
           turnId,
         })
         if (started) options.onGesture?.(parsed.id)
+      } else if (parsed.type === 'outfit') {
+        // Whitelist against the preset's registered variants. Unknown ids
+        // (or a marker for the outfit already worn) drop silently — the
+        // animation/character pipeline never sees them.
+        const known = options.outfits?.some((m) => m.id === parsed.id) ?? false
+        const isNoOp = parsed.id === options.currentOutfitId
+        const applied = known && !isNoOp
+        tracer.emit({
+          category: 'outfit.change',
+          data: { id: parsed.id, known, isNoOp, applied },
+          turnId,
+        })
+        if (applied) options.onOutfit?.(parsed.id)
       }
     },
   })
@@ -202,6 +231,8 @@ export function runTurn(options: RunTurnOptions): TurnHandle {
         memoryBlock: options.memoryBlock,
         gestures: animation?.getGestureIds() ?? [],
         boundEmotions: animation?.getBoundEmotions() ?? [],
+        outfits: options.outfits,
+        currentOutfitId: options.currentOutfitId,
         proactiveReason: options.proactiveReason,
       })
       tracer.emit({

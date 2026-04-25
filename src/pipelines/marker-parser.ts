@@ -100,7 +100,18 @@ export interface PlayMarker {
   id: string
 }
 
-export type ParsedMarker = ActMarker | DelayMarker | PlayMarker | null
+export interface OutfitMarker {
+  type: 'outfit'
+  /** Variant id from the preset's `models` registry (e.g. 'pajama'). */
+  id: string
+}
+
+export type ParsedMarker =
+  | ActMarker
+  | DelayMarker
+  | PlayMarker
+  | OutfitMarker
+  | null
 
 /**
  * Parses a raw `<|…|>` marker string into a typed payload. Returns null if
@@ -151,6 +162,14 @@ export function parseMarker(raw: string): ParsedMarker {
   const playMatch = /^PLAY\s*:\s*([a-z][a-z0-9_]*)$/i.exec(inner)
   if (playMatch) {
     return { type: 'play', id: playMatch[1].toLowerCase() }
+  }
+
+  // OUTFIT: <variant-id>
+  // Same shape as PLAY. The turn handler whitelists against the active
+  // preset's `models` and drops unknown ids silently.
+  const outfitMatch = /^OUTFIT\s*:\s*([a-z][a-z0-9_]*)$/i.exec(inner)
+  if (outfitMatch) {
+    return { type: 'outfit', id: outfitMatch[1].toLowerCase() }
   }
 
   return null

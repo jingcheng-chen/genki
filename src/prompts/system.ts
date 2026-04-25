@@ -35,6 +35,7 @@ import {
   emotionHasBodyAnimation,
 } from '../vrm/emotion-vocab'
 import { INLINE_AUDIO_TAGS } from '../pipelines/emotion-audio-tags'
+import type { VRMModelVariant } from '../vrm/presets/types'
 
 /**
  * Coarse time-of-day bucket used by the system prompt. Matches the spirit
@@ -70,6 +71,15 @@ export interface SystemPromptOptions {
   /** Emotion names that have a paired body animation on the active preset.
    *  Only a hint — emotions without a body clip still trigger the face. */
   boundEmotions?: string[]
+  /**
+   * Outfit variants available on the active preset (for OUTFIT markers).
+   * Skipped when fewer than 2 are registered — there's nothing to change
+   * INTO and the marker block would be noise.
+   */
+  outfits?: readonly VRMModelVariant[]
+  /** Currently-worn outfit id. Used to phrase the block as "you are
+   *  currently wearing X" so the model doesn't echo a no-op change. */
+  currentOutfitId?: string
   /**
    * Non-user-initiated trigger for this turn. `silence` means the user has
    * gone quiet and the character should gently break the pause. Appended as
@@ -108,6 +118,37 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
         '',
       ]
     : []
+
+  // Outfit block — only meaningful when the preset ships >1 variant. The
+  // roster is bound to the active character (just like gestures), so the
+  // block stays static across turns of the same character and stays in
+  // the cacheable prefix.
+  const outfits = options.outfits ?? []
+  const outfitBlock =
+    outfits.length > 1
+      ? [
+          '## Outfits',
+          '',
+          'You can change your outfit inline with:',
+          '',
+          '    <|OUTFIT:<id>|>',
+          '',
+          'Available outfits:',
+          ...outfits.map((o) => {
+            const tag = o.id === options.currentOutfitId ? ' (currently wearing)' : ''
+            const desc = o.description ? ` — ${o.description}` : ''
+            return `  - ${o.id} (${o.label})${tag}${desc}`
+          }),
+          '',
+          'Only change when it fits the moment — the user asks, or the',
+          'context naturally calls for it (heading to bed, getting ready',
+          'to go out, settling in for the night). Do not change on every',
+          'turn. The marker fires the change immediately, so emit it just',
+          'before the line that motivates it. Do NOT emit a marker for the',
+          'outfit you are already wearing.',
+          '',
+        ]
+      : []
 
   const customBlock = options.customInstructions?.trim()
     ? [
@@ -148,6 +189,7 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     '— 0 to 2 per short reply, only when the feeling is real.',
     '',
     ...gestureBlock,
+    ...outfitBlock,
     '## Pausing',
     '',
     'You can pause in your speech with `<|DELAY:0.6|>` (seconds, max 10).',

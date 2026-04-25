@@ -143,7 +143,13 @@ export const ani: VRMPreset = {
   name: 'Ani',
   tagline: "Goth-meets-nerd. She's already kinda into you.",
   models: [
-    { id: 'default', label: 'Default', url: '/vrm/ani/models/ani_default.vrm' },
+    {
+      id: 'default',
+      label: 'Default',
+      url: '/vrm/ani/models/ani_default.vrm',
+      previewUrl: '/vrm/ani/models/ani_default.png',
+      description: 'black mini dress, blonde twin tails — her usual look',
+    },
   ],
   defaultModelId: 'default',
   previewUrl: '/vrm/ani/preview.png',

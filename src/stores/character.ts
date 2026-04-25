@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { DEFAULT_PRESET_ID } from '../vrm/presets'
+import { DEFAULT_PRESET_ID, getPreset } from '../vrm/presets'
 import type { Lang } from '../vrm/presets'
 
 /**
@@ -30,6 +30,14 @@ import type { Lang } from '../vrm/presets'
  */
 interface CharacterState {
   activePresetId: string
+  /**
+   * Per-character active outfit (VRM model variant) id. Missing keys fall
+   * back to the preset's `defaultModelId` at read time, so adding a new
+   * character or a new variant does NOT need a migration. Persisted so an
+   * outfit picked via the UI or via the LLM's `<|OUTFIT:id|>` marker
+   * survives reload.
+   */
+  activeModelIdByPreset: Record<string, string>
   customInstructions: Record<string, string>
   /**
    * How many times a greeting has been played for each preset, across all
@@ -59,6 +67,7 @@ interface CharacterState {
    *  character to render". */
   hasHydrated: boolean
   setActivePresetId: (id: string) => void
+  setActiveModelId: (presetId: string, modelId: string) => void
   setCustomInstructions: (presetId: string, text: string) => void
   recordGreeting: (presetId: string) => void
   setLastUserLang: (lang: Lang) => void
@@ -69,6 +78,7 @@ export const useCharacterStore = create<CharacterState>()(
   persist(
     (set) => ({
       activePresetId: DEFAULT_PRESET_ID,
+      activeModelIdByPreset: {},
       customInstructions: {},
       greetedPresets: {},
       lastUserLang: null,
@@ -77,6 +87,13 @@ export const useCharacterStore = create<CharacterState>()(
       // so the UI doesn't block on an empty cache.
       hasHydrated: false,
       setActivePresetId: (id) => set({ activePresetId: id }),
+      setActiveModelId: (presetId, modelId) =>
+        set((state) => ({
+          activeModelIdByPreset: {
+            ...state.activeModelIdByPreset,
+            [presetId]: modelId,
+          },
+        })),
       setCustomInstructions: (presetId, text) =>
         set((state) => ({
           customInstructions: { ...state.customInstructions, [presetId]: text },
@@ -103,6 +120,7 @@ export const useCharacterStore = create<CharacterState>()(
       // round-trips by default.
       partialize: (state) => ({
         activePresetId: state.activePresetId,
+        activeModelIdByPreset: state.activeModelIdByPreset,
         customInstructions: state.customInstructions,
         greetedPresets: state.greetedPresets,
         lastUserLang: state.lastUserLang,
@@ -118,3 +136,22 @@ export const useCharacterStore = create<CharacterState>()(
     },
   ),
 )
+
+/**
+ * Resolve the active model id for a preset, falling back to the preset's
+ * `defaultModelId` when the user has never picked a variant.
+ *
+ * Pure function over the store snapshot — safe to call from anywhere
+ * (selectors, marker handlers, etc.) without subscribing.
+ */
+export function resolveActiveModelId(
+  state: CharacterState,
+  presetId: string,
+): string {
+  const stored = state.activeModelIdByPreset[presetId]
+  if (stored) {
+    const preset = getPreset(presetId)
+    if (preset.models.some((m) => m.id === stored)) return stored
+  }
+  return getPreset(presetId).defaultModelId
+}

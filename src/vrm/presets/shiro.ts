@@ -135,9 +135,27 @@ export const shiro: VRMPreset = {
   // Three outfits shipped: casual (everyday at home), school uniform
   // (weekday second-year), skirt (a small step up). Default = casual.
   models: [
-    { id: 'casual', label: 'Casual', url: '/vrm/shiro/models/shiro_casual.vrm' },
-    { id: 'school_uniform', label: 'School Uniform', url: '/vrm/shiro/models/shiro_schooluniform.vrm' },
-    { id: 'skirt', label: 'Skirt', url: '/vrm/shiro/models/shiro_skirt.vrm' },
+    {
+      id: 'casual',
+      label: 'Casual',
+      url: '/vrm/shiro/models/shiro_casual.vrm',
+      previewUrl: '/vrm/shiro/models/shiro_casual.png',
+      description: 'white off-shoulder top with denim shorts — easy at-home day',
+    },
+    {
+      id: 'school_uniform',
+      label: 'School Uniform',
+      url: '/vrm/shiro/models/shiro_schooluniform.vrm',
+      previewUrl: '/vrm/shiro/models/shiro_schooluniform.png',
+      description: 'high-school second-year uniform — weekday default',
+    },
+    {
+      id: 'skirt',
+      label: 'Skirt',
+      url: '/vrm/shiro/models/shiro_skirt.vrm',
+      previewUrl: '/vrm/shiro/models/shiro_skirt.png',
+      description: 'simple skirt-and-top — a small step up from casual',
+    },
   ],
   defaultModelId: 'school_uniform',
   previewUrl: '/vrm/shiro/preview.jpg',

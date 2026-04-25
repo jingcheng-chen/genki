@@ -11,7 +11,10 @@ import { runGreeting, type GreetingHandle } from './greeting'
 import { detectLanguage, resolveSessionLang } from './language'
 import { useCharacterStore } from '../stores/character'
 import { getPreset } from '../vrm/presets'
-import type { CharacterVoiceSettings } from '../vrm/presets/types'
+import type {
+  CharacterVoiceSettings,
+  VRMModelVariant,
+} from '../vrm/presets/types'
 
 /**
  * Phase 5 orchestrator — owns the mic VAD, the live transcript, the chat
@@ -50,6 +53,10 @@ export interface TurnPreset {
   customInstructions?: string
   voiceId?: string
   voiceSettings?: CharacterVoiceSettings
+  /** Registered outfit variants for this preset (for OUTFIT markers). */
+  outfits?: readonly VRMModelVariant[]
+  /** Currently-worn outfit id (resolved from the character store). */
+  currentOutfitId?: string
 }
 
 export interface TurnControllerOptions {
@@ -80,6 +87,7 @@ export type TurnControllerEvent =
   | { type: 'assistant-delta'; text: string }
   | { type: 'emotion'; name: string; intensity: number }
   | { type: 'gesture'; id: string }
+  | { type: 'outfit'; id: string }
   | { type: 'error'; message: string }
   | { type: 'greeting'; active: boolean }
 
@@ -377,6 +385,8 @@ export function createTurnController(
       retrievedFactIds,
       voiceId: preset.voiceId,
       voiceSettings: preset.voiceSettings,
+      outfits: preset.outfits,
+      currentOutfitId: preset.currentOutfitId,
       onAssistantText: (delta) => {
         if (state === 'thinking') setState('speaking')
         liveAssistant += delta
@@ -388,6 +398,9 @@ export function createTurnController(
       },
       onGesture: (id) => {
         emit({ type: 'gesture', id })
+      },
+      onOutfit: (id) => {
+        emit({ type: 'outfit', id })
       },
       onStreamEnd: () => {
         // Order matters: clear `liveAssistant` BEFORE emitting so React's
@@ -509,6 +522,8 @@ export function createTurnController(
       retrievedFactIds,
       voiceId: preset.voiceId,
       voiceSettings: preset.voiceSettings,
+      outfits: preset.outfits,
+      currentOutfitId: preset.currentOutfitId,
       proactiveReason: 'silence',
       onAssistantText: (delta) => {
         if (state === 'thinking') setState('speaking')
@@ -521,6 +536,9 @@ export function createTurnController(
       },
       onGesture: (id) => {
         emit({ type: 'gesture', id })
+      },
+      onOutfit: (id) => {
+        emit({ type: 'outfit', id })
       },
       onStreamEnd: () => {
         history.push({

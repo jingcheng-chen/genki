@@ -62,6 +62,9 @@ export const TRACE_CATEGORIES = [
   'anim.emotion',
   'anim.gesture',
 
+  // Outfit (LLM-driven OUTFIT marker)
+  'outfit.change',
+
   // Memory
   'memory.retrieve',
   'memory.extract-req',

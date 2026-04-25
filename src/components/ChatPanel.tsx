@@ -11,7 +11,7 @@ import {
   type TurnState,
   type UITurn,
 } from '../pipelines/turn-controller'
-import { useCharacterStore } from '../stores/character'
+import { resolveActiveModelId, useCharacterStore } from '../stores/character'
 import { useSceneStore } from '../stores/scene'
 import { getPreset } from '../vrm/presets'
 import { pushToast } from '../stores/toasts'
@@ -66,7 +66,10 @@ export function ChatPanel() {
             id: p.id,
             persona: p.persona,
             voiceId: p.voiceId,
+            voiceSettings: p.voiceSettings,
             customInstructions: state.customInstructions[state.activePresetId],
+            outfits: p.models,
+            currentOutfitId: resolveActiveModelId(state, state.activePresetId),
           }
         },
       }),
@@ -104,6 +107,16 @@ export function ChatPanel() {
         case 'greeting':
           setGreetingActive(ev.active)
           break
+        case 'outfit': {
+          // LLM-emitted outfit change. Apply it to the same store the UI
+          // outfit picker writes to — Scene re-keys VRMCharacter on
+          // `presetId:modelId`, so the swap goes through the existing
+          // remount path. Read the active preset id at apply time so a
+          // mid-turn character switch can't mis-target the change.
+          const state = useCharacterStore.getState()
+          state.setActiveModelId(state.activePresetId, ev.id)
+          break
+        }
       }
     })
     return () => {

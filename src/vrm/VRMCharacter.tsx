@@ -33,6 +33,8 @@ import { createFpsSampler } from '../observability/fps'
 
 interface Props {
   presetId: string
+  /** Active outfit variant id. Falls back to the preset's defaultModelId. */
+  modelId?: string
 }
 
 /**
@@ -53,11 +55,11 @@ interface Props {
  *   6. vrm.update(delta)                — commit humanoid + springBone + lookAt
  *                                         + expressionManager in one call
  */
-export function VRMCharacter({ presetId }: Props) {
+export function VRMCharacter({ presetId, modelId }: Props) {
   const preset = getPreset(presetId)
-  // Resolve the active outfit variant's url. Today we always load the
-  // default; the helper keeps the site for a future outfit-swap UI.
-  const gltf = useVRMLoader(getModelUrl(preset))
+  // Resolve the active outfit variant's url. Scene re-keys this component
+  // on `<presetId>:<modelId>`, so a swap unmounts/remounts cleanly.
+  const gltf = useVRMLoader(getModelUrl(preset, modelId))
   const vrm = gltf.userData.vrm
   const vrmRef = useRef<VRM>(vrm)
 

@@ -36,17 +36,32 @@ export interface CharacterVoiceSettings {
  * A single outfit variant of a character's VRM model. A preset ships one or
  * more variants; `defaultModelId` picks which one loads by default.
  *
- * Long-term this lets the user (or the romance-meter / hidden-goals system
- * from the reference config) swap outfits at runtime. Today only the
- * default is used.
+ * Two ways the active variant gets switched at runtime:
+ *   1. The CharacterPicker outfit row — thumbnails read `previewUrl`.
+ *   2. An LLM-emitted `<|OUTFIT:<id>|>` marker. The model is told the
+ *      available ids + `description` for each so it can map "change into
+ *      something cozy" to the right variant.
+ *
+ * Convention: the `.png|.jpg` next to each `.vrm` in
+ * `/public/vrm/<preset>/models/` is the thumbnail for that variant.
  */
 export interface VRMModelVariant {
   /** Stable id — e.g. 'default', 'casual', 'school_uniform'. */
   id: string
-  /** Display name for a future outfit-swap UI. */
+  /** Display name for the outfit-swap UI. */
   label: string
   /** Public-served VRM url, e.g. '/vrm/shiro/models/shiro_casual.vrm'. */
   url: string
+  /** Public-served thumbnail url, e.g. '/vrm/shiro/models/shiro_casual.png'. */
+  previewUrl: string
+  /**
+   * Short LLM-facing hint describing the outfit. Injected into the system
+   * prompt's outfit block so the model can match a casual user request
+   * ("get into something more comfy") to the right variant id.
+   * Keep it terse — a few descriptive words, no marketing copy.
+   * Optional: when missing the model still sees `id` and `label`.
+   */
+  description?: string
 }
 
 /**

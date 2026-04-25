@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useCharacterStore } from '../stores/character'
+import { resolveActiveModelId, useCharacterStore } from '../stores/character'
 import { VRM_PRESETS, type VRMPreset } from '../vrm/presets'
+import type { VRMModelVariant } from '../vrm/presets/types'
 
 /**
  * Compact top-left panel for choosing between the bundled characters and
@@ -18,6 +19,10 @@ export function CharacterPicker() {
   const customInstructionsMap = useCharacterStore((s) => s.customInstructions)
   const setActive = useCharacterStore((s) => s.setActivePresetId)
   const setCustom = useCharacterStore((s) => s.setCustomInstructions)
+  const setActiveModelId = useCharacterStore((s) => s.setActiveModelId)
+  const activeModelId = useCharacterStore((s) =>
+    resolveActiveModelId(s, s.activePresetId),
+  )
 
   const [expanded, setExpanded] = useState(false)
 
@@ -54,6 +59,24 @@ export function CharacterPicker() {
             ))}
           </div>
 
+          {active.models.length > 1 && (
+            <div className="mt-1 flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-wider opacity-60">
+                Outfit — {active.name}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {active.models.map((m) => (
+                  <OutfitTile
+                    key={m.id}
+                    variant={m}
+                    active={m.id === activeModelId}
+                    onSelect={() => setActiveModelId(active.id, m.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mt-1 flex flex-col gap-1">
             <label
               htmlFor="custom-instructions"
@@ -77,6 +100,44 @@ export function CharacterPicker() {
         </>
       )}
     </div>
+  )
+}
+
+function OutfitTile({
+  variant,
+  active,
+  onSelect,
+}: {
+  variant: VRMModelVariant
+  active: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      onClick={onSelect}
+      title={variant.description ?? variant.label}
+      className={[
+        'group relative h-16 w-12 overflow-hidden rounded transition-all',
+        active
+          ? 'ring-2 ring-cyan-400'
+          : 'opacity-70 ring-1 ring-zinc-700 hover:opacity-100',
+      ].join(' ')}
+    >
+      <img
+        src={variant.previewUrl}
+        alt={variant.label}
+        className="h-full w-full object-cover"
+        loading="lazy"
+      />
+      <span
+        className={[
+          'absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-center text-[9px]',
+          active ? 'text-cyan-200' : 'text-zinc-100',
+        ].join(' ')}
+      >
+        {variant.label}
+      </span>
+    </button>
   )
 }
 
